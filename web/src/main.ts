@@ -282,25 +282,22 @@ async function dashboard() {
 }
 
 async function units() {
-  const [unitsRes, catalogRes] = await Promise.all([
+  const [unitsRes, catalogRes, valuesRes] = await Promise.all([
     api(`/api/v1/units?project_id=${project}`),
-    api('/api/v1/territories/catalog')
+    api('/api/v1/territories/catalog'),
+    api(`/api/v1/analytics/units?project_id=${project}`)
   ]);
 
   const catalog: any[] = catalogRes.data || [];
-  const located = unitsRes.data.filter((x: J) => x.latitude !== null && x.longitude !== null);
 
   view('Territórios e Unidades', `
     <button id="new">Nova unidade</button>
     <section class="panel" id="form"></section>
-    ${located.length ? `<section class="panel">
-      <h2>Mapa das unidades com coordenadas</h2>
-      <p class="muted">O mapa mostra somente coordenadas cadastradas. Nenhuma posição é estimada pelo município.</p>
+    <section class="panel">
+      <div class="map-heading"><div><h2>Mapa analítico territorial</h2><p class="muted">As cores representam valores agregados dos relatórios. Cinza significa ausência de dados.</p></div><div class="map-controls"><label>Camada<select id="map-layer"><option value="municipios">Municípios</option><option value="coredes">COREDEs</option><option value="regioes-funcionais">Regiões Funcionais</option><option value="biomas">Biomas</option></select></label><label>Indicador<select id="map-metric"><option value="total">Participações</option><option value="women">Mulheres</option><option value="men">Homens</option><option value="youth">Jovens</option></select></label></div></div>
       <div id="unit-map" aria-label="Mapa das unidades"></div>
-    </section>` : `<section class="notice map-empty">
-      <b>Mapa ainda sem pontos</b>
-      <span>As ${unitsRes.data.length} unidades não possuem latitude e longitude informadas. O mapa será exibido quando houver ao menos uma coordenada cadastrada.</span>
-    </section>`}
+      <div id="map-legend" class="map-legend"></div>
+    </section>
     <section class="panel">
       <h2>Unidades cadastradas (${unitsRes.data.length})</h2>
       ${unitsRes.data.length ? `<div class="scroll"><table class="units-table"><thead><tr><th>Unidade</th><th>Município</th><th>COREDE / RF</th><th>Localização</th><th><span class="sr-only">Ações</span></th></tr></thead><tbody>${unitsRes.data.map((x: J) => `
@@ -314,20 +311,28 @@ async function units() {
     </section>
   `);
 
-  if (located.length) {
-    const map = L.map('unit-map', { attributionControl: false, minZoom: 2, maxZoom: 18 }).setView([-30, -53], 6);
-    map.getContainer().classList.add('offline-map');
-    const bounds: L.LatLngExpression[] = [];
-    for (const x of located) {
-      const point: [number, number] = [Number(x.latitude), Number(x.longitude)];
-      bounds.push(point);
-      L.circleMarker(point, { radius: 8, color: '#173f35', fillColor: '#2b8068', fillOpacity: .85, weight: 2 })
-        .addTo(map)
-        .bindPopup(`<b>${h(x.name)}</b><br>${h(x.municipality)}<br><small>${h(x.corede || '')} · ${h(x.functional_region || '')}</small>`);
-    }
-    map.fitBounds(L.latLngBounds(bounds), { padding: [30, 30], maxZoom: 12 });
-    setTimeout(() => map.invalidateSize(), 50);
-  }
+  const map = L.map('unit-map', { attributionControl: false, minZoom: 5, maxZoom: 12 }).setView([-30, -53], 6);
+  map.getContainer().classList.add('offline-map');
+  let thematic: any;
+  const metricLabels: J = { total: 'Participações', women: 'Mulheres', men: 'Homens', youth: 'Jovens' };
+  const renderMap = async () => {
+    const layer = (document.querySelector('#map-layer') as HTMLSelectElement).value;
+    const metric = (document.querySelector('#map-metric') as HTMLSelectElement).value;
+    const geo = await api(`/api/v1/maps/${layer}`);
+    const totals = new Map<string, number>();
+    const keyForRow = (x: J) => layer === 'municipios' ? x.municipality : layer === 'coredes' ? x.corede : layer === 'regioes-funcionais' ? x.functional_region : x.biome_predominant;
+    for (const x of valuesRes.data || []) { const key = keyForRow(x); if (key) totals.set(key, (totals.get(key) || 0) + Number(x[metric] || 0)); }
+    const values = [...totals.values()].filter(x => x > 0); const max = Math.max(0, ...values);
+    const color = (v: number | undefined) => v === undefined ? '#e4e8e5' : v === 0 ? '#d6e8df' : v <= max * .25 ? '#b8ddcc' : v <= max * .5 ? '#73b99c' : v <= max * .75 ? '#318267' : '#0e503e';
+    if (thematic) map.removeLayer(thematic);
+    const featureKey = (feature: any) => layer === 'biomas' ? feature.properties.id : feature.properties.nome;
+    thematic = L.geoJSON(geo, { style: (feature: any) => { const value = totals.get(featureKey(feature)); return { color: '#557068', weight: 1, fillColor: color(value), fillOpacity: .82 }; }, onEachFeature: (feature: any, shape: any) => { const value = totals.get(featureKey(feature)); shape.bindPopup(`<b>${h(feature.properties.nome)}</b><br>${h(metricLabels[metric])}: <strong>${value === undefined ? 'sem dados' : value}</strong>`); } }).addTo(map);
+    const bounds = thematic.getBounds(); if (bounds.isValid()) map.fitBounds(bounds, { padding: [15, 15] });
+    document.querySelector('#map-legend')!.innerHTML = `<b>${h(metricLabels[metric])}</b><span><i style="background:#e4e8e5"></i>Sem dados</span><span><i style="background:#b8ddcc"></i>Baixo</span><span><i style="background:#73b99c"></i>Médio</span><span><i style="background:#0e503e"></i>Alto</span>`;
+  };
+  document.querySelector('#map-layer')!.addEventListener('change', renderMap);
+  document.querySelector('#map-metric')!.addEventListener('change', renderMap);
+  await renderMap(); setTimeout(() => map.invalidateSize(), 50);
 
   const render = (x: J = {}) => {
     document.querySelector('#form')!.innerHTML = `

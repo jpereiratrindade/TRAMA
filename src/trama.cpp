@@ -184,6 +184,7 @@ int server_main(int argc,char**argv){std::string root=arg(argc,argv,"--data-dir"
  app.Get("/api/v1/territories/dimensions",[p](const httplib::Request&r,httplib::Response&z){
    Db d(p.db);if(!require(d,r,z))return;try{auto cs=rs_get("/v1/coredes"),rs=rs_get("/v1/regioes-funcionais"),bs=rs_get("/v1/biomas");json coredes=json::array(),rfs=json::array(),biomes=json::array();for(auto&x:cs["data"])coredes.push_back({{"name",x["nome"]},{"code",x["id"]}});for(auto&x:rs["data"])rfs.push_back({{"name","Região Funcional "+std::to_string(x["numero"].get<int>())},{"code",x["id"]}});for(auto&x:bs["data"])biomes.push_back({{"name",x["nome"]},{"code",x["id"]},{"available",false}});respond(z,{{"data",{{"coredes",coredes},{"functional_regions",rfs},{"biomes",biomes}}},{"meta",{{"source","TRAMA-RS"},{"status_validacao",cs["meta"]["status_validacao"]},{"biome_filters_available",false}}}});}catch(const std::exception&e){error(z,503,"trama_rs_indisponivel",e.what());}
  });
+ app.Get(R"(/api/v1/maps/(municipios|coredes|regioes-funcionais|biomas))",[p](const httplib::Request&r,httplib::Response&z){Db d(p.db);if(!require(d,r,z))return;try{auto geo=rs_get("/v1/mapa/"+r.matches[1].str()+".geojson");z.set_content(geo.dump(),"application/geo+json; charset=utf-8");headers(z);}catch(const std::exception&e){error(z,503,"mapa_indisponivel",e.what());}});
  app.Get(R"(/api/v1/territories/context/([0-9]{7}))",[p](const httplib::Request&r,httplib::Response&z){
    Db d(p.db);if(!require(d,r,z))return;
    auto ctx=territorial_context(p,r.matches[1].str());
