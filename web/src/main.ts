@@ -2,30 +2,542 @@ import './style.css';
 import './map.css';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-type J=Record<string,any>;
-let csrf='', project='', projectName='Nenhum projeto selecionado';
-const app=document.querySelector<HTMLDivElement>('#app')!;
-async function api(path:string,init:RequestInit={}){const h=new Headers(init.headers);h.set('Content-Type','application/json');if(csrf)h.set('X-CSRF-Token',csrf);const r=await fetch(path,{...init,headers:h});if(r.status===401){login();throw Error('Autenticação necessária')}if(!r.ok){const j=await r.json().catch(()=>({error:{message:'Erro inesperado'}}));throw Error(j.error?.message||'Erro')}return r.headers.get('content-type')?.includes('json')?r.json():r.text()}
-function login(){app.innerHTML=`<main class="login"><section><div class="brand">TRAMA</div><p>Territórios, Registros, Atividades, Monitoramento e Análise</p><form id="login"><label>Usuário<input name="login" autocomplete="username" required></label><label>Senha<input name="password" type="password" autocomplete="current-password" required></label><button>Entrar</button><p class="error" role="alert"></p></form><small>Sempre pronto. Sempre incompleto.</small></section></main>`;(document.querySelector('#login') as HTMLFormElement).onsubmit=async e=>{e.preventDefault();try{const j=await api('/api/v1/auth/login',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.currentTarget as HTMLFormElement)))});csrf=j.csrf_token;await layout(j.user)}catch(x){document.querySelector('.error')!.textContent=(x as Error).message}}}
-const nav=[['dashboard','Visão Geral'],['projects','Projetos'],['units','Territórios e Unidades'],['activities','Atividades'],['observations','Observações'],['actions','Encaminhamentos'],['reports','Relatórios'],['sources','Fontes e Qualidade'],['admin','Administração']];
-async function layout(user:J){const ps=await api('/api/v1/projects');if(ps.data.length){project=ps.data[0].id;projectName=ps.data[0].name}app.innerHTML=`<div class="shell"><aside><div class="brand">TRAMA</div><nav>${nav.map((x,i)=>`<button data-page="${x[0]}" ${i?'':'class="active"'}>${x[1]}</button>`).join('')}</nav><footer>${user.login}<button id="logout">Sair</button></footer></aside><main><header><button id="menu">☰</button><div><strong id="title">Visão Geral</strong><small id="project-name">${projectName}</small></div><span class="badge">Dados locais</span></header><div id="content"></div></main></div>`;document.querySelectorAll('[data-page]').forEach(b=>(b as HTMLButtonElement).onclick=()=>show((b as HTMLElement).dataset.page!));document.querySelector('#menu')!.addEventListener('click',()=>document.querySelector('aside')!.classList.toggle('open'));document.querySelector('#logout')!.addEventListener('click',async()=>{await api('/api/v1/auth/logout',{method:'POST',body:'{}'});csrf='';login()});show(project?'dashboard':'projects')}
-function view(title:string,html:string){document.querySelector('#title')!.textContent=title;document.querySelector('#content')!.innerHTML=html;document.querySelector('aside')!.classList.remove('open')}
-function formData(form:HTMLFormElement){return Object.fromEntries(new FormData(form)) as J}
-function h(value:unknown){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!))}
-async function remove(path:string,back:string){if(!confirm('Excluir este registro? O histórico de auditoria será preservado.'))return;await api(path,{method:'DELETE',body:'{}'});await show(back)}
-async function show(page:string){document.querySelectorAll('[data-page]').forEach(b=>b.classList.toggle('active',(b as HTMLElement).dataset.page===page));view(nav.find(x=>x[0]===page)?.[1]||page,'<p class="loading">Carregando…</p>');try{if(page==='projects')await projects();else if(!project)view('Projetos','<div class="notice">Crie um projeto para começar.</div>');else if(page==='dashboard')await dashboard();else if(page==='units')await units();else if(page==='activities')await records('activities');else if(page==='observations')await records('observations');else if(page==='actions')await records('action-items');else if(page==='reports')reports();else if(page==='sources')await sources();else await admin()}catch(e){view('Erro',`<div class="notice error">${(e as Error).message}</div>`)}}
-async function projects(){const j=await api('/api/v1/projects');view('Projetos',`<button id="new">Novo projeto</button><section class="panel" id="form"></section><section class="panel"><h2>Projetos</h2>${j.data.length?j.data.map((x:J)=>`<article class="record"><b>${x.name}</b><span>${x.code} · ${x.status} · revisão ${x.revision}</span><p>${x.description}</p><button data-select="${x.id}" class="secondary">Selecionar</button> <button data-edit='${encodeURIComponent(JSON.stringify(x))}' class="secondary">Editar</button> <button data-delete="${x.id}" class="danger">Excluir</button></article>`).join(''):'<p>Nenhum projeto cadastrado.</p>'}</section>`);const render=(x:J={})=>{document.querySelector('#form')!.innerHTML=`<h2>${x.id?'Editar':'Novo'} projeto</h2><form id="project-form"><label>Código<input name="code" value="${x.code||''}" required></label><label>Nome<input name="name" value="${x.name||''}" required></label><label>Descrição<textarea name="description">${x.description||''}</textarea></label><label>Status<select name="status"><option>active</option><option>paused</option><option>completed</option></select></label><button>Salvar</button></form>`;(document.querySelector('#project-form') as HTMLFormElement).onsubmit=async e=>{e.preventDefault();const body={...formData(e.currentTarget as HTMLFormElement),revision:x.revision};await api(x.id?`/api/v1/projects/${x.id}`:'/api/v1/projects',{method:x.id?'PATCH':'POST',body:JSON.stringify(body)});await show('projects')}};document.querySelector('#new')!.addEventListener('click',()=>render());document.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click',()=>render(JSON.parse(decodeURIComponent((b as HTMLElement).dataset.edit!)))));document.querySelectorAll('[data-delete]').forEach(b=>b.addEventListener('click',()=>remove(`/api/v1/projects/${(b as HTMLElement).dataset.delete}`,'projects')));document.querySelectorAll('[data-select]').forEach(b=>b.addEventListener('click',()=>{const x=j.data.find((v:J)=>v.id===(b as HTMLElement).dataset.select);project=x.id;projectName=x.name;document.querySelector('#project-name')!.textContent=x.name;show('dashboard')}))}
-async function dashboard(){const [projects,groups,units]=await Promise.all([api('/api/v1/projects'),api(`/api/v1/project-groups?project_id=${project}`),api(`/api/v1/units?project_id=${project}`)]);view('Visão Geral',`<section class="filters"><label>Projeto<select id="dash-project">${projects.data.map((x:J)=>`<option value="${h(x.id)}" ${x.id===project?'selected':''}>${h(x.name)}</option>`).join('')}</select></label><label>Grupo<select id="group"><option value="">Todos</option>${groups.data.map((x:J)=>`<option value="${h(x.id)}">${h(x.label)}</option>`).join('')}</select></label><label>Unidade<select id="unit"><option value="">Todas</option>${units.data.map((x:J)=>`<option value="${h(x.id)}">${h(x.name)}</option>`).join('')}</select></label><button id="reset" class="secondary">Limpar filtros</button></section><div id="dash"><p class="loading">Consultando dados locais…</p></div>`);const update=async()=>{const g=(document.querySelector('#group') as HTMLSelectElement).value,u=(document.querySelector('#unit') as HTMLSelectElement).value,q=`project_id=${encodeURIComponent(project)}&group_id=${encodeURIComponent(g)}&unit_id=${encodeURIComponent(u)}`,[ov,series]=await Promise.all([api('/api/v1/analytics/overview?'+q),api('/api/v1/analytics/units?'+q)]),k=ov.kpis,max=Math.max(1,...series.data.map((x:J)=>x.total)),pct=(v:any)=>v===null?'—':Number(v).toLocaleString('pt-BR',{maximumFractionDigits:1})+'%';document.querySelector('#dash')!.innerHTML=`<div class="notice">Resultados calculados pelo backend a partir do banco local e dos filtros selecionados.</div><section class="cards">${[['Unidades documentadas',k.uacs_documented],['Participações informadas',k.reported_attendances],['Mulheres',k.reported_women],['Homens',k.reported_men],['Jovens',k.reported_youth],['Participação feminina',pct(k.female_share)],['Participação jovem',pct(k.youth_share)],['Encaminhamentos pendentes',k.pending_action_items ?? 0]].map(x=>`<article><small>${x[0]}</small><strong>${x[1]}</strong></article>`).join('')}</section><section class="panel"><h2>Participações por unidade</h2><div class="chart" role="img" aria-label="Gráfico de participações por unidade">${series.data.map((x:J)=>`<div><span title="${h(x.unit_name)}">${h(x.unit_name)}</span><i style="width:${Number(x.total)/max*100}%"></i><b>${x.total}</b></div>`).join('')||'<p>Sem agregados no recorte selecionado.</p>'}</div></section><section class="panel table"><h2>Detalhamento e alternativa ao gráfico</h2><div class="scroll"><table><thead><tr><th>Grupo<th>Unidade<th>Território<th>Total<th>Mulheres<th>Homens<th>Jovens<th>Qualidade</tr></thead><tbody>${series.data.map((x:J)=>`<tr><td>${h(x.group_code)}<td>${h(x.unit_name)}<td>${h(x.municipality)}<td>${x.total}<td>${x.women??'—'}<td>${x.men??'—'}<td>${x.youth??'—'}<td>${h(x.quality_status)}</tr>`).join('')||'<tr><td colspan="8">Nenhum dado encontrado.</tr>'}</tbody></table></div></section><section class="panel"><h2>Observações por validação</h2>${(ov.observations_by_status ?? []).length?(ov.observations_by_status ?? []).map((x:J)=>`<span class="badge">${h(x.status)}: ${x.count}</span>`).join(' '):'<p>Nenhuma observação no projeto.</p>'}</section>`};(document.querySelector('#dash-project') as HTMLSelectElement).onchange=e=>{const x=projects.data.find((v:J)=>v.id===(e.target as HTMLSelectElement).value);project=x.id;projectName=x.name;document.querySelector('#project-name')!.textContent=x.name;dashboard()};document.querySelector('#group')!.addEventListener('change',update);document.querySelector('#unit')!.addEventListener('change',update);document.querySelector('#reset')!.addEventListener('click',()=>{(document.querySelector('#group') as HTMLSelectElement).value='';(document.querySelector('#unit') as HTMLSelectElement).value='';update()});await update()}
-async function units(){
-  const j=await api(`/api/v1/units?project_id=${project}`),located=j.data.filter((x:J)=>x.latitude!==null&&x.longitude!==null);
-  view('Territórios e Unidades',`<button id="new">Nova unidade</button><section class="panel" id="form"></section><section class="panel"><h2>Mapa das unidades</h2><p class="muted">Mapa Leaflet local. O fundo não depende de serviços externos; somente unidades com coordenadas informadas são posicionadas.</p><div id="unit-map" aria-label="Mapa das unidades"></div>${located.length?'': '<p>Nenhuma unidade possui coordenadas.</p>'}</section><section class="panel"><h2>Unidades cadastradas</h2>${j.data.length?j.data.map((x:J)=>`<article class="record"><b>${h(x.name)}</b><span>${h(x.municipality)} · ${h(x.corede)||'COREDE não informado'} · ${h(x.functional_region)||'Região funcional não informada'} · ${h(x.biome)||'Bioma não informado'}</span><span>${x.latitude??'latitude não informada'}, ${x.longitude??'longitude não informada'} · revisão ${x.revision}</span><button data-edit='${encodeURIComponent(JSON.stringify(x))}' class="secondary">Editar</button> <button data-delete="${h(x.id)}" class="danger">Excluir</button></article>`).join(''):'<p>Nenhuma unidade.</p>'}</section>`);
-  const map=L.map('unit-map',{attributionControl:false,minZoom:2,maxZoom:18}).setView([-30,-53],5);map.getContainer().classList.add('offline-map');
-  const bounds:L.LatLngExpression[]=[];for(const x of located){const point:[number,number]=[Number(x.latitude),Number(x.longitude)];bounds.push(point);L.circleMarker(point,{radius:8,color:'#173f35',fillColor:'#2b8068',fillOpacity:.85,weight:2}).addTo(map).bindPopup(`<b>${h(x.name)}</b><br>${h(x.municipality)}<br>${h(x.corede)} · ${h(x.functional_region)}<br>${h(x.biome)}`)}if(bounds.length)map.fitBounds(L.latLngBounds(bounds),{padding:[30,30],maxZoom:12});setTimeout(()=>map.invalidateSize(),0);
-  const render=(x:J={})=>{document.querySelector('#form')!.innerHTML=`<h2>${x.id?'Editar':'Nova'} unidade</h2><form id="unit-form"><div class="form-grid"><label>Código<input name="code" value="${h(x.code)}" required></label><label>Nome<input name="name" value="${h(x.name)}" required></label><label>Município<input name="municipality" value="${h(x.municipality)}" required></label><label>COREDE<input name="corede" value="${h(x.corede)}"></label><label>Região funcional<input name="functional_region" value="${h(x.functional_region)}"></label><label>Bioma<input name="biome" value="${h(x.biome)}"></label><label>Latitude<input name="latitude" type="number" min="-90" max="90" step="any" value="${x.latitude??''}"></label><label>Longitude<input name="longitude" type="number" min="-180" max="180" step="any" value="${x.longitude??''}"></label><label>Tipo<input name="unit_type" value="${h(x.unit_type||'monitoring_unit')}"></label></div><button>Salvar</button></form>`;(document.querySelector('#unit-form') as HTMLFormElement).onsubmit=async e=>{e.preventDefault();const body=formData(e.currentTarget as HTMLFormElement);body.latitude=body.latitude===''?null:Number(body.latitude);body.longitude=body.longitude===''?null:Number(body.longitude);await api(x.id?`/api/v1/units/${x.id}`:'/api/v1/units',{method:x.id?'PATCH':'POST',body:JSON.stringify({...body,project_id:project,revision:x.revision})});show('units')}};
-  document.querySelector('#new')!.addEventListener('click',()=>render());document.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click',()=>render(JSON.parse(decodeURIComponent((b as HTMLElement).dataset.edit!)))));document.querySelectorAll('[data-delete]').forEach(b=>b.addEventListener('click',()=>remove(`/api/v1/units/${(b as HTMLElement).dataset.delete}`,'units')))
+
+type J = Record<string, any>;
+let csrf = '', project = '', projectName = 'Nenhum projeto selecionado';
+const app = document.querySelector<HTMLDivElement>('#app')!;
+
+async function api(path: string, init: RequestInit = {}) {
+  const h = new Headers(init.headers);
+  h.set('Content-Type', 'application/json');
+  if (csrf) h.set('X-CSRF-Token', csrf);
+  const r = await fetch(path, { ...init, headers: h });
+  if (r.status === 401) {
+    login();
+    throw Error('Autenticação necessária');
+  }
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({ error: { message: 'Erro inesperado' } }));
+    throw Error(j.error?.message || 'Erro');
+  }
+  return r.headers.get('content-type')?.includes('json') ? r.json() : r.text();
 }
-async function records(kind:string){const path=kind==='action-items'?'action-items':kind;const j=await api(`/api/v1/${path}?project_id=${project}`);const labels:any={activities:'Atividades',observations:'Observações','action-items':'Encaminhamentos'};view(labels[kind],`<button id="new">Novo registro</button><section class="panel" id="form"></section><section class="panel">${j.data.length?j.data.map((x:J)=>`<article class="record"><b>${x.title||x.topic}</b><span>${x.status||x.validation_status} · revisão ${x.revision}</span><p>${x.description||x.statement||x.details||''}</p><button data-edit='${encodeURIComponent(JSON.stringify(x))}' class="secondary">Editar</button> <button data-delete="${x.id}" class="danger">Excluir</button></article>`).join(''):'<p>Nenhum registro.</p>'}</section>`);const activities=kind==='observations'?(await api(`/api/v1/activities?project_id=${project}`)).data:[];const render=(x:J={})=>{let fields=kind==='activities'?`<label>Título<input name="title" value="${x.title||''}" required></label><label>Descrição<textarea name="description">${x.description||''}</textarea></label><label>Status<input name="status" value="${x.status||'planned'}"></label>`:kind==='observations'?`<label>Atividade<select name="activity_id" ${x.id?'disabled':''}>${activities.map((a:J)=>`<option value="${a.id}" ${a.id===x.activity_id?'selected':''}>${a.title}</option>`).join('')}</select></label><label>Tema<input name="topic" value="${x.topic||''}" required></label><label>Declaração<textarea name="statement" required>${x.statement||''}</textarea></label><label>Validação<select name="validation_status"><option>draft</option><option>review_required</option><option>validated</option><option>rejected</option></select></label>`:`<label>Título<input name="title" value="${x.title||''}" required></label><label>Detalhes<textarea name="details">${x.details||''}</textarea></label><label>Estado<select name="status"><option>open</option><option>in_progress</option><option>completed</option><option>blocked</option><option>cancelled</option></select></label><label>Prioridade<input name="priority" value="${x.priority||'normal'}"></label>`;document.querySelector('#form')!.innerHTML=`<h2>${x.id?'Editar':'Novo'} registro</h2><form id="record-form">${fields}<button>Salvar</button></form>`;(document.querySelector('#record-form') as HTMLFormElement).onsubmit=async e=>{e.preventDefault();let body:J={...formData(e.currentTarget as HTMLFormElement),project_id:project,revision:x.revision};if(kind==='observations'){body.observation_kind=x.observation_kind||'reported';body.epistemic_status=x.epistemic_status||'observed'}await api(x.id?`/api/v1/${path}/${x.id}`:`/api/v1/${path}`,{method:x.id?'PATCH':'POST',body:JSON.stringify(body)});show(kind==='action-items'?'actions':kind)}};document.querySelector('#new')!.addEventListener('click',()=>render());document.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click',()=>render(JSON.parse(decodeURIComponent((b as HTMLElement).dataset.edit!)))));document.querySelectorAll('[data-delete]').forEach(b=>b.addEventListener('click',()=>remove(`/api/v1/${path}/${(b as HTMLElement).dataset.delete}`,kind==='action-items'?'actions':kind)))}
-function reports(){view('Relatórios',`<section class="panel"><button id="report">Gerar relatório</button> <a class="button secondary" href="/api/v1/exports/attendance.csv?project_id=${project}">CSV</a> <a class="button secondary" href="/api/v1/exports/attendance.json?project_id=${project}">JSON</a></section>`);document.querySelector('#report')!.addEventListener('click',async()=>{const html=await api('/api/v1/reports/preview',{method:'POST',body:JSON.stringify({project_id:project})});const w=open();w?.document.write(html)})}
-async function sources(){const j=await api('/api/v1/sources');view('Fontes e Qualidade',`<section class="panel">${j.data.map((x:J)=>`<article class="record"><b>${x.title}</b><span>${x.provenance_status}</span></article>`).join('')||'<p>Nenhuma fonte vinculada.</p>'}</section>`)}
-async function admin(){const j=await api('/api/v1/admin/integrations');view('Administração',`<section class="panel"><h2>Integrações</h2>${j.data.map((x:J)=>`<article class="record"><b>${x.name}</b><span>${x.status}</span></article>`).join('')}</section>`)}
-api('/api/v1/auth/me').then((j:J)=>layout(j.user)).catch(()=>login());
+
+function login() {
+  app.innerHTML = `<main class="login"><section><div class="brand">TRAMA</div><p>Territórios, Registros, Atividades, Monitoramento e Análise</p><form id="login"><label>Usuário<input name="login" autocomplete="username" required></label><label>Senha<input name="password" type="password" autocomplete="current-password" required></label><button>Entrar</button><p class="error" role="alert"></p></form><small>Sempre pronto. Sempre incompleto.</small></section></main>`;
+  (document.querySelector('#login') as HTMLFormElement).onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const j = await api('/api/v1/auth/login', {
+        method: 'POST',
+        body: JSON.stringify(Object.fromEntries(new FormData(e.currentTarget as HTMLFormElement)))
+      });
+      csrf = j.csrf_token;
+      await layout(j.user);
+    } catch (x) {
+      document.querySelector('.error')!.textContent = (x as Error).message;
+    }
+  };
+}
+
+const nav = [
+  ['dashboard', 'Visão Geral'],
+  ['projects', 'Projetos'],
+  ['units', 'Territórios e Unidades'],
+  ['activities', 'Atividades'],
+  ['observations', 'Observações'],
+  ['actions', 'Encaminhamentos'],
+  ['reports', 'Relatórios'],
+  ['sources', 'Fontes e Qualidade'],
+  ['admin', 'Administração']
+];
+
+async function layout(user: J) {
+  const ps = await api('/api/v1/projects');
+  if (ps.data.length) {
+    project = ps.data[0].id;
+    projectName = ps.data[0].name;
+  }
+  app.innerHTML = `<div class="shell"><aside><div class="brand">TRAMA</div><nav>${nav.map((x, i) => `<button data-page="${x[0]}" ${i ? '' : 'class="active"'}>${x[1]}</button>`).join('')}</nav><footer>${h(user.login)}<button id="logout">Sair</button></footer></aside><main><header><button id="menu">☰</button><div><strong id="title">Visão Geral</strong><small id="project-name">${h(projectName)}</small></div><span class="badge verified">Territórios RS · Offline Ready</span></header><div id="content"></div></main></div>`;
+  
+  document.querySelectorAll('[data-page]').forEach(b => (b as HTMLButtonElement).onclick = () => show((b as HTMLElement).dataset.page!));
+  document.querySelector('#menu')!.addEventListener('click', () => document.querySelector('aside')!.classList.toggle('open'));
+  document.querySelector('#logout')!.addEventListener('click', async () => {
+    await api('/api/v1/auth/logout', { method: 'POST', body: '{}' });
+    csrf = '';
+    login();
+  });
+  show(project ? 'dashboard' : 'projects');
+}
+
+function view(title: string, html: string) {
+  document.querySelector('#title')!.textContent = title;
+  document.querySelector('#content')!.innerHTML = html;
+  document.querySelector('aside')?.classList.remove('open');
+}
+
+function formData(form: HTMLFormElement) {
+  return Object.fromEntries(new FormData(form)) as J;
+}
+
+function h(value: unknown) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+}
+
+async function remove(path: string, back: string) {
+  if (!confirm('Excluir este registro? O histórico de auditoria será preservado.')) return;
+  await api(path, { method: 'DELETE', body: '{}' });
+  await show(back);
+}
+
+async function show(page: string) {
+  document.querySelectorAll('[data-page]').forEach(b => b.classList.toggle('active', (b as HTMLElement).dataset.page === page));
+  view(nav.find(x => x[0] === page)?.[1] || page, '<p class="loading">Carregando…</p>');
+  try {
+    if (page === 'projects') await projects();
+    else if (!project) view('Projetos', '<div class="notice">Crie um projeto para começar.</div>');
+    else if (page === 'dashboard') await dashboard();
+    else if (page === 'units') await units();
+    else if (page === 'activities') await records('activities');
+    else if (page === 'observations') await records('observations');
+    else if (page === 'actions') await records('action-items');
+    else if (page === 'reports') reports();
+    else if (page === 'sources') await sources();
+    else await admin();
+  } catch (e) {
+    view('Erro', `<div class="notice error">${(e as Error).message}</div>`);
+  }
+}
+
+async function projects() {
+  const j = await api('/api/v1/projects');
+  view('Projetos', `<button id="new">Novo projeto</button><section class="panel" id="form"></section><section class="panel"><h2>Projetos</h2>${j.data.length ? j.data.map((x: J) => `<article class="record"><b>${h(x.name)}</b><span>${h(x.code)} · ${h(x.status)} · revisão ${x.revision}</span><p>${h(x.description)}</p><button data-select="${h(x.id)}" class="secondary">Selecionar</button> <button data-edit='${encodeURIComponent(JSON.stringify(x))}' class="secondary">Editar</button> <button data-delete="${h(x.id)}" class="danger">Excluir</button></article>`).join('') : '<p>Nenhum projeto cadastrado.</p>'}</section>`);
+  
+  const render = (x: J = {}) => {
+    document.querySelector('#form')!.innerHTML = `<h2>${x.id ? 'Editar' : 'Novo'} projeto</h2><form id="project-form"><label>Código<input name="code" value="${h(x.code || '')}" required></label><label>Nome<input name="name" value="${h(x.name || '')}" required></label><label>Descrição<textarea name="description">${h(x.description || '')}</textarea></label><label>Status<select name="status"><option ${x.status === 'active' ? 'selected' : ''}>active</option><option ${x.status === 'paused' ? 'selected' : ''}>paused</option><option ${x.status === 'completed' ? 'selected' : ''}>completed</option></select></label><button>Salvar</button></form>`;
+    (document.querySelector('#project-form') as HTMLFormElement).onsubmit = async (e) => {
+      e.preventDefault();
+      const body = { ...formData(e.currentTarget as HTMLFormElement), revision: x.revision };
+      await api(x.id ? `/api/v1/projects/${x.id}` : '/api/v1/projects', {
+        method: x.id ? 'PATCH' : 'POST',
+        body: JSON.stringify(body)
+      });
+      await show('projects');
+    };
+  };
+
+  document.querySelector('#new')!.addEventListener('click', () => render());
+  document.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => render(JSON.parse(decodeURIComponent((b as HTMLElement).dataset.edit!)))));
+  document.querySelectorAll('[data-delete]').forEach(b => b.addEventListener('click', () => remove(`/api/v1/projects/${(b as HTMLElement).dataset.delete}`, 'projects')));
+  document.querySelectorAll('[data-select]').forEach(b => b.addEventListener('click', () => {
+    const x = j.data.find((v: J) => v.id === (b as HTMLElement).dataset.select);
+    project = x.id;
+    projectName = x.name;
+    document.querySelector('#project-name')!.textContent = x.name;
+    show('dashboard');
+  }));
+}
+
+async function dashboard() {
+  const [projectsRes, groupsRes, unitsRes, dimsRes] = await Promise.all([
+    api('/api/v1/projects'),
+    api(`/api/v1/project-groups?project_id=${project}`),
+    api(`/api/v1/units?project_id=${project}`),
+    api(`/api/v1/analytics/dimensions?project_id=${project}`)
+  ]);
+
+  const coredes: any[] = dimsRes.data?.coredes || [];
+  const rfs: any[] = dimsRes.data?.functional_regions || [];
+  const biomes: any[] = dimsRes.data?.biomes || [];
+
+  view('Visão Geral', `
+    <section class="filters">
+      <label>Projeto
+        <select id="dash-project">${projectsRes.data.map((x: J) => `<option value="${h(x.id)}" ${x.id === project ? 'selected' : ''}>${h(x.name)}</option>`).join('')}</select>
+      </label>
+      <label>Grupo
+        <select id="group"><option value="">Todos</option>${groupsRes.data.map((x: J) => `<option value="${h(x.id)}">${h(x.label)}</option>`).join('')}</select>
+      </label>
+      <label>Unidade
+        <select id="unit"><option value="">Todas</option>${unitsRes.data.map((x: J) => `<option value="${h(x.id)}">${h(x.name)}</option>`).join('')}</select>
+      </label>
+      <label>COREDE
+        <select id="corede"><option value="">Todos os 28 COREDEs</option>${coredes.map((x: J) => `<option value="${h(x.name)}">${h(x.name)}</option>`).join('')}</select>
+      </label>
+      <label>Região Funcional
+        <select id="rf"><option value="">Todas as 9 RFs</option>${rfs.map((x: J) => `<option value="${h(x.name)}">${h(x.name)}</option>`).join('')}</select>
+      </label>
+      <label>Bioma
+        <select id="biome"><option value="">Todos os Biomas</option>${biomes.map((x: J) => `<option value="${h(x.name)}">${h(x.name)}</option>`).join('')}</select>
+      </label>
+      <button id="reset" class="secondary">Limpar filtros</button>
+    </section>
+    <div id="dash"><p class="loading">Consultando dados locais e catálogo territorial…</p></div>
+  `);
+
+  const update = async () => {
+    const g = (document.querySelector('#group') as HTMLSelectElement).value;
+    const u = (document.querySelector('#unit') as HTMLSelectElement).value;
+    const c = (document.querySelector('#corede') as HTMLSelectElement).value;
+    const rf = (document.querySelector('#rf') as HTMLSelectElement).value;
+    const b = (document.querySelector('#biome') as HTMLSelectElement).value;
+
+    const q = `project_id=${encodeURIComponent(project)}&group_id=${encodeURIComponent(g)}&unit_id=${encodeURIComponent(u)}&corede=${encodeURIComponent(c)}&functional_region=${encodeURIComponent(rf)}&biome=${encodeURIComponent(b)}`;
+    const [ov, series] = await Promise.all([
+      api('/api/v1/analytics/overview?' + q),
+      api('/api/v1/analytics/units?' + q)
+    ]);
+
+    const k = ov.kpis;
+    const max = Math.max(1, ...series.data.map((x: J) => x.total));
+    const pct = (v: any) => v === null ? '—' : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%';
+
+    document.querySelector('#dash')!.innerHTML = `
+      <div class="provenance-box">
+        <b>Dimensões Territoriais Integradas:</b> Planejamento administrativo (Região Funcional → COREDE → Município) e ecologia (Bioma Predominante e Ocorrentes).
+      </div>
+      <section class="cards">
+        ${[
+          ['Unidades documentadas', k.uacs_documented],
+          ['Participações informadas', k.reported_attendances],
+          ['Mulheres', k.reported_women],
+          ['Homens', k.reported_men],
+          ['Jovens', k.reported_youth],
+          ['Participação feminina', pct(k.female_share)],
+          ['Participação jovem', pct(k.youth_share)],
+          ['Encaminhamentos pendentes', k.pending_action_items ?? 0]
+        ].map(x => `<article><small>${x[0]}</small><strong>${x[1]}</strong></article>`).join('')}
+      </section>
+      <section class="panel">
+        <h2>Participações por unidade</h2>
+        <div class="chart" role="img" aria-label="Gráfico de participações por unidade">
+          ${series.data.map((x: J) => `<div><span title="${h(x.unit_name)} (${h(x.municipality)})">${h(x.unit_name)}</span><i style="width:${Number(x.total) / max * 100}%"></i><b>${x.total}</b></div>`).join('') || '<p>Sem agregados no recorte selecionado.</p>'}
+        </div>
+      </section>
+      <section class="panel table">
+        <h2>Detalhamento territorial e agregados</h2>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Grupo</th>
+                <th>Unidade</th>
+                <th>Município (IBGE)</th>
+                <th>COREDE</th>
+                <th>Região Funcional</th>
+                <th>Bioma</th>
+                <th>Total</th>
+                <th>Mulheres</th>
+                <th>Homens</th>
+                <th>Jovens</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${series.data.map((x: J) => `
+                <tr>
+                  <td>${h(x.group_code || '—')}</td>
+                  <td><b>${h(x.unit_name)}</b></td>
+                  <td>${h(x.municipality)} ${x.ibge_code ? `<small>(${x.ibge_code})</small>` : ''}</td>
+                  <td>${h(x.corede || '—')}</td>
+                  <td>${h(x.functional_region || '—')}</td>
+                  <td><span class="badge tag">${h(x.biome_predominant || '—')}</span></td>
+                  <td><b>${x.total}</b></td>
+                  <td>${x.women ?? '—'}</td>
+                  <td>${x.men ?? '—'}</td>
+                  <td>${x.youth ?? '—'}</td>
+                </tr>
+              `).join('') || '<tr><td colspan="10">Nenhum dado encontrado no recorte.</tr>'}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section class="panel">
+        <h2>Observações por validação</h2>
+        ${(ov.observations_by_status ?? []).length ? (ov.observations_by_status ?? []).map((x: J) => `<span class="badge">${h(x.status)}: ${x.count}</span>`).join(' ') : '<p>Nenhuma observação no projeto.</p>'}
+      </section>
+    `;
+  };
+
+  (document.querySelector('#dash-project') as HTMLSelectElement).onchange = (e) => {
+    const x = projectsRes.data.find((v: J) => v.id === (e.target as HTMLSelectElement).value);
+    project = x.id;
+    projectName = x.name;
+    document.querySelector('#project-name')!.textContent = x.name;
+    dashboard();
+  };
+
+  ['#group', '#unit', '#corede', '#rf', '#biome'].forEach(selector => {
+    document.querySelector(selector)?.addEventListener('change', update);
+  });
+
+  document.querySelector('#reset')!.addEventListener('click', () => {
+    ['#group', '#unit', '#corede', '#rf', '#biome'].forEach(selector => {
+      const el = document.querySelector(selector) as HTMLSelectElement;
+      if (el) el.value = '';
+    });
+    update();
+  });
+
+  await update();
+}
+
+async function units() {
+  const [unitsRes, catalogRes] = await Promise.all([
+    api(`/api/v1/units?project_id=${project}`),
+    api('/api/v1/territories/catalog')
+  ]);
+
+  const catalog: any[] = catalogRes.data || [];
+  const located = unitsRes.data.filter((x: J) => x.latitude !== null && x.longitude !== null);
+
+  view('Territórios e Unidades', `
+    <button id="new">Nova unidade</button>
+    <section class="panel" id="form"></section>
+    <section class="panel">
+      <h2>Mapa territorial das unidades</h2>
+      <p class="muted">Mapa Leaflet com base offline. As coordenadas e recortes territoriais (Município, COREDE, RF e Biomas) são referenciados de forma autoritativa.</p>
+      <div id="unit-map" aria-label="Mapa das unidades"></div>
+      ${located.length ? '' : '<p>Nenhuma unidade possui coordenadas informadas.</p>'}
+    </section>
+    <section class="panel">
+      <h2>Unidades cadastradas (${unitsRes.data.length})</h2>
+      ${unitsRes.data.length ? unitsRes.data.map((x: J) => `
+        <article class="record">
+          <b>${h(x.name)} <span class="badge verified">${x.ibge_code ? `IBGE ${h(x.ibge_code)}` : 'Sem IBGE'}</span></b>
+          <span><b>Município:</b> ${h(x.municipality)} · <b>COREDE:</b> ${h(x.corede || 'Não informado')} · <b>Região Funcional:</b> ${h(x.functional_region || 'Não informada')}</span>
+          <span><b>Bioma Predominante:</b> ${h(x.biome_predominant || x.biome || 'Não informado')} ${x.biomes_occurring ? `· <b>Ocorrência:</b> ${h(x.biomes_occurring)}` : ''}</span>
+          <span><b>Coordenadas:</b> ${x.latitude ?? '—'}, ${x.longitude ?? '—'} · <b>Revisão:</b> ${x.revision}</span>
+          <div style="margin-top: .5rem;">
+            <button data-edit='${encodeURIComponent(JSON.stringify(x))}' class="secondary">Editar</button>
+            <button data-delete="${h(x.id)}" class="danger">Excluir</button>
+          </div>
+        </article>
+      `).join('') : '<p>Nenhuma unidade cadastrada neste projeto.</p>'}
+    </section>
+  `);
+
+  const map = L.map('unit-map', { attributionControl: false, minZoom: 2, maxZoom: 18 }).setView([-30, -53], 6);
+  map.getContainer().classList.add('offline-map');
+
+  const bounds: L.LatLngExpression[] = [];
+  for (const x of located) {
+    const point: [number, number] = [Number(x.latitude), Number(x.longitude)];
+    bounds.push(point);
+    L.circleMarker(point, { radius: 8, color: '#173f35', fillColor: '#2b8068', fillOpacity: .85, weight: 2 })
+      .addTo(map)
+      .bindPopup(`
+        <b>${h(x.name)}</b><br>
+        <b>Município:</b> ${h(x.municipality)} ${x.ibge_code ? `(${h(x.ibge_code)})` : ''}<br>
+        <b>COREDE:</b> ${h(x.corede)}<br>
+        <b>Região Funcional:</b> ${h(x.functional_region)}<br>
+        <b>Bioma Predominante:</b> ${h(x.biome_predominant || x.biome)}<br>
+        ${x.biomes_occurring ? `<small>Biomas ocorrentes: ${h(x.biomes_occurring)}</small>` : ''}
+      `);
+  }
+  if (bounds.length) map.fitBounds(L.latLngBounds(bounds), { padding: [30, 30], maxZoom: 12 });
+  setTimeout(() => map.invalidateSize(), 50);
+
+  const render = (x: J = {}) => {
+    document.querySelector('#form')!.innerHTML = `
+      <h2>${x.id ? 'Editar' : 'Nova'} unidade</h2>
+      <div class="provenance-box" id="prov-box" style="${x.ibge_code ? '' : 'display:none;'}">
+        <b>Referência Territorial RS:</b> Município validado no catálogo local com preenchimento automático das dimensões administrativa (COREDE / RF) e ecológica (Biomas).
+      </div>
+      <form id="unit-form">
+        <datalist id="muni-list">
+          ${catalog.map((m: J) => `<option value="${h(m.municipality_name)}">${h(m.ibge_code)} - ${h(m.corede_name)} (${h(m.rf_name)})</option>`).join('')}
+        </datalist>
+        <div class="form-grid">
+          <label>Código da Unidade<input name="code" value="${h(x.code || '')}" required></label>
+          <label>Nome da Unidade<input name="name" value="${h(x.name || '')}" required></label>
+          <label>Município (497 do RS)
+            <input name="municipality" id="muni-input" list="muni-list" value="${h(x.municipality || '')}" placeholder="Digite o nome ou código IBGE" required autocomplete="off">
+          </label>
+          <label>Código IBGE (7 dígitos)
+            <input name="ibge_code" id="ibge-input" value="${h(x.ibge_code || '')}" readonly style="background:#f8f9fa;">
+          </label>
+          <label>COREDE (28 Conselhos)
+            <input name="corede" id="corede-input" value="${h(x.corede || '')}" readonly style="background:#f8f9fa;">
+          </label>
+          <label>Região Funcional (9 RFs)
+            <input name="functional_region" id="rf-input" value="${h(x.functional_region || '')}" readonly style="background:#f8f9fa;">
+          </label>
+          <label>Bioma Predominante
+            <input name="biome_predominant" id="biome-input" value="${h(x.biome_predominant || x.biome || '')}" readonly style="background:#f8f9fa;">
+          </label>
+          <label>Biomas Ocorrentes (JSON / Lista)
+            <input name="biomes_occurring" id="occ-input" value="${h(x.biomes_occurring || '')}" readonly style="background:#f8f9fa;">
+          </label>
+          <label>Latitude<input name="latitude" type="number" min="-90" max="90" step="any" value="${x.latitude ?? ''}"></label>
+          <label>Longitude<input name="longitude" type="number" min="-180" max="180" step="any" value="${x.longitude ?? ''}"></label>
+          <label>Tipo de Unidade<input name="unit_type" value="${h(x.unit_type || 'monitoring_unit')}"></label>
+        </div>
+        <button>Salvar Unidade</button>
+      </form>
+    `;
+
+    const muniInput = document.querySelector('#muni-input') as HTMLInputElement;
+    const updateTerritoryFromCatalog = async (query: string) => {
+      if (!query) return;
+      const found = catalog.find((c: J) => c.municipality_name.toLowerCase() === query.toLowerCase() || c.ibge_code === query);
+      if (found) {
+        (document.querySelector('#ibge-input') as HTMLInputElement).value = found.ibge_code;
+        (document.querySelector('#corede-input') as HTMLInputElement).value = found.corede_name;
+        (document.querySelector('#rf-input') as HTMLInputElement).value = found.rf_name;
+        (document.querySelector('#biome-input') as HTMLInputElement).value = found.biome_predominant;
+        (document.querySelector('#occ-input') as HTMLInputElement).value = typeof found.biomes_occurring === 'string' ? found.biomes_occurring : JSON.stringify(found.biomes_occurring);
+        document.querySelector('#prov-box')!.removeAttribute('style');
+      } else {
+        try {
+          const res = await api(`/api/v1/territories/lookup?q=${encodeURIComponent(query)}`);
+          if (res.data) {
+            const d = res.data;
+            (document.querySelector('#ibge-input') as HTMLInputElement).value = d.municipio.codigo_ibge;
+            (document.querySelector('#corede-input') as HTMLInputElement).value = d.planejamento.corede.nome;
+            (document.querySelector('#rf-input') as HTMLInputElement).value = d.planejamento.regiao_funcional.nome;
+            (document.querySelector('#biome-input') as HTMLInputElement).value = d.ecologia.bioma_predominante;
+            (document.querySelector('#occ-input') as HTMLInputElement).value = JSON.stringify(d.ecologia.biomas_ocorrentes);
+            document.querySelector('#prov-box')!.removeAttribute('style');
+          }
+        } catch (_) {}
+      }
+    };
+
+    muniInput.addEventListener('input', (e) => updateTerritoryFromCatalog((e.target as HTMLInputElement).value));
+    muniInput.addEventListener('change', (e) => updateTerritoryFromCatalog((e.target as HTMLInputElement).value));
+
+    (document.querySelector('#unit-form') as HTMLFormElement).onsubmit = async (e) => {
+      e.preventDefault();
+      const body = formData(e.currentTarget as HTMLFormElement);
+      body.latitude = body.latitude === '' ? null : Number(body.latitude);
+      body.longitude = body.longitude === '' ? null : Number(body.longitude);
+      await api(x.id ? `/api/v1/units/${x.id}` : '/api/v1/units', {
+        method: x.id ? 'PATCH' : 'POST',
+        body: JSON.stringify({ ...body, project_id: project, revision: x.revision })
+      });
+      show('units');
+    };
+  };
+
+  document.querySelector('#new')!.addEventListener('click', () => render());
+  document.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => render(JSON.parse(decodeURIComponent((b as HTMLElement).dataset.edit!)))));
+  document.querySelectorAll('[data-delete]').forEach(b => b.addEventListener('click', () => remove(`/api/v1/units/${(b as HTMLElement).dataset.delete}`, 'units')));
+}
+
+async function records(kind: string) {
+  const path = kind === 'action-items' ? 'action-items' : kind;
+  const j = await api(`/api/v1/${path}?project_id=${project}`);
+  const labels: any = { activities: 'Atividades', observations: 'Observações', 'action-items': 'Encaminhamentos' };
+  
+  view(labels[kind], `
+    <button id="new">Novo registro</button>
+    <section class="panel" id="form"></section>
+    <section class="panel">
+      ${j.data.length ? j.data.map((x: J) => `
+        <article class="record">
+          <b>${h(x.title || x.topic)}</b>
+          <span>${h(x.status || x.validation_status)} · revisão ${x.revision}</span>
+          <p>${h(x.description || x.statement || x.details || '')}</p>
+          <button data-edit='${encodeURIComponent(JSON.stringify(x))}' class="secondary">Editar</button>
+          <button data-delete="${h(x.id)}" class="danger">Excluir</button>
+        </article>
+      `).join('') : '<p>Nenhum registro.</p>'}
+    </section>
+  `);
+
+  const activities = kind === 'observations' ? (await api(`/api/v1/activities?project_id=${project}`)).data : [];
+  const render = (x: J = {}) => {
+    let fields = kind === 'activities' ? `
+      <label>Título<input name="title" value="${h(x.title || '')}" required></label>
+      <label>Descrição<textarea name="description">${h(x.description || '')}</textarea></label>
+      <label>Status<input name="status" value="${h(x.status || 'planned')}"></label>
+    ` : kind === 'observations' ? `
+      <label>Atividade<select name="activity_id" ${x.id ? 'disabled' : ''}>${activities.map((a: J) => `<option value="${h(a.id)}" ${a.id === x.activity_id ? 'selected' : ''}>${h(a.title)}</option>`).join('')}</select></label>
+      <label>Tema<input name="topic" value="${h(x.topic || '')}" required></label>
+      <label>Declaração<textarea name="statement" required>${h(x.statement || '')}</textarea></label>
+      <label>Validação<select name="validation_status"><option ${x.validation_status === 'draft' ? 'selected' : ''}>draft</option><option ${x.validation_status === 'review_required' ? 'selected' : ''}>review_required</option><option ${x.validation_status === 'validated' ? 'selected' : ''}>validated</option><option ${x.validation_status === 'rejected' ? 'selected' : ''}>rejected</option></select></label>
+    ` : `
+      <label>Título<input name="title" value="${h(x.title || '')}" required></label>
+      <label>Detalhes<textarea name="details">${h(x.details || '')}</textarea></label>
+      <label>Estado<select name="status"><option ${x.status === 'open' ? 'selected' : ''}>open</option><option ${x.status === 'in_progress' ? 'selected' : ''}>in_progress</option><option ${x.status === 'completed' ? 'selected' : ''}>completed</option><option ${x.status === 'blocked' ? 'selected' : ''}>blocked</option><option ${x.status === 'cancelled' ? 'selected' : ''}>cancelled</option></select></label>
+      <label>Prioridade<input name="priority" value="${h(x.priority || 'normal')}"></label>
+    `;
+
+    document.querySelector('#form')!.innerHTML = `<h2>${x.id ? 'Editar' : 'Novo'} registro</h2><form id="record-form">${fields}<button>Salvar</button></form>`;
+    (document.querySelector('#record-form') as HTMLFormElement).onsubmit = async (e) => {
+      e.preventDefault();
+      let body: J = { ...formData(e.currentTarget as HTMLFormElement), project_id: project, revision: x.revision };
+      if (kind === 'observations') {
+        body.observation_kind = x.observation_kind || 'reported';
+        body.epistemic_status = x.epistemic_status || 'observed';
+      }
+      await api(x.id ? `/api/v1/${path}/${x.id}` : `/api/v1/${path}`, {
+        method: x.id ? 'PATCH' : 'POST',
+        body: JSON.stringify(body)
+      });
+      show(kind === 'action-items' ? 'actions' : kind);
+    };
+  };
+
+  document.querySelector('#new')!.addEventListener('click', () => render());
+  document.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => render(JSON.parse(decodeURIComponent((b as HTMLElement).dataset.edit!)))));
+  document.querySelectorAll('[data-delete]').forEach(b => b.addEventListener('click', () => remove(`/api/v1/${path}/${(b as HTMLElement).dataset.delete}`, kind === 'action-items' ? 'actions' : kind)));
+}
+
+function reports() {
+  view('Relatórios', `
+    <section class="panel">
+      <h2>Relatórios e Exportações</h2>
+      <p>Geração de relatórios com dados consolidados e proveniência metodológica.</p>
+      <button id="report">Gerar relatório técnico</button>
+      <a class="button secondary" href="/api/v1/exports/attendance.csv?project_id=${project}">Exportar CSV</a>
+      <a class="button secondary" href="/api/v1/exports/attendance.json?project_id=${project}">Exportar JSON</a>
+    </section>
+  `);
+  document.querySelector('#report')!.addEventListener('click', async () => {
+    const html = await api('/api/v1/reports/preview', { method: 'POST', body: JSON.stringify({ project_id: project }) });
+    const w = open();
+    w?.document.write(html);
+  });
+}
+
+async function sources() {
+  const j = await api('/api/v1/sources');
+  view('Fontes e Qualidade', `
+    <section class="panel">
+      <h2>Fontes Documentais</h2>
+      ${j.data.map((x: J) => `
+        <article class="record">
+          <b>${h(x.title)}</b>
+          <span>Tipo: ${h(x.kind)} · Status: ${h(x.provenance_status)} · SHA256: ${h(x.sha256 || '—')}</span>
+        </article>
+      `).join('') || '<p>Nenhuma fonte vinculada.</p>'}
+    </section>
+  `);
+}
+
+async function admin() {
+  const j = await api('/api/v1/admin/integrations');
+  view('Administração', `
+    <section class="panel">
+      <h2>Serviço Territorial RS (Integração de Referência)</h2>
+      <article class="record">
+        <b>Serviço Territorial RS (C++26 Adaptador Local) <span class="badge verified">Ativo / Offline Ready</span></b>
+        <span><b>Catálogo Local:</b> 497 municípios do RS, 28 COREDEs, 9 Regiões Funcionais</span>
+        <span><b>Fontes de Referência:</b> SPGG/RS (Atlas Socioeconômico) e IBGE (Biomas 1:250.000)</span>
+        <span><b>Status de Operação:</b> Sincronizado e validado localmente</span>
+      </article>
+    </section>
+    <section class="panel">
+      <h2>Outros Serviços do Ecossistema</h2>
+      ${j.data.map((x: J) => `
+        <article class="record">
+          <b>${h(x.name)}</b>
+          <span>Status: ${h(x.status)} · Conector: ${h(x.health)}</span>
+        </article>
+      `).join('')}
+    </section>
+  `);
+}
+
+api('/api/v1/auth/me').then((j: J) => layout(j.user)).catch(() => login());

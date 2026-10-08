@@ -30,8 +30,32 @@ std::string slug(std::string s){std::string o;for(unsigned char c:s){if(std::isa
 std::string read(const fs::path&p){std::ifstream f(p,std::ios::binary);if(!f)throw std::runtime_error("cannot read "+p.string());return {(std::istreambuf_iterator<char>(f)),{}};}
 void bind_opt(St&q,int i,const std::optional<std::string>&v){if(v)q.b(i,*v);else q.bn(i);}
 void bind_number_or_null(St&q,int i,const json&j,const char*key){if(j.contains(key)&&!j[key].is_null()&&j[key]!="")sqlite3_bind_double(q.s,i,j[key].is_number()?j[key].get<double>():std::stod(j[key].get<std::string>()));else q.bn(i);}
-std::string territory(Db&d,const std::string&kind,const std::string&name,const std::optional<std::string>&parent,const std::string&ts){if(name.empty())return parent.value_or("");auto id="territory-"+sha256(kind+"\n"+name+"\n"+parent.value_or("")).substr(0,24);St s(d,"INSERT INTO territories(id,parent_id,kind,code,name,created_at,updated_at) VALUES(?,?,?,NULL,?,?,?) ON CONFLICT(id) DO UPDATE SET parent_id=excluded.parent_id,name=excluded.name,updated_at=excluded.updated_at");s.b(1,id);bind_opt(s,2,parent);s.b(3,kind);s.b(4,name);s.b(5,ts);s.b(6,ts);s.row();return id;}
-std::string territory_chain(Db&d,const json&j,const std::string&ts){std::optional<std::string>parent;auto biome=j.value("biome","");if(!biome.empty())parent=territory(d,"biome",biome,{},ts);auto region=j.value("functional_region","");if(!region.empty())parent=territory(d,"functional_region",region,parent,ts);auto corede=j.value("corede","");if(!corede.empty())parent=territory(d,"corede",corede,parent,ts);auto municipality=j.value("municipality","");if(municipality.empty())throw std::runtime_error("município é obrigatório");return territory(d,"municipality",municipality,parent,ts);}
+std::string territory(Db&d,const std::string&kind,const std::string&name,const std::optional<std::string>&parent,const std::string&ts,const std::optional<std::string>&code={}){if(name.empty())return parent.value_or("");auto id="territory-"+sha256(kind+"\n"+name+"\n"+parent.value_or("")).substr(0,24);St s(d,"INSERT INTO territories(id,parent_id,kind,code,name,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET parent_id=excluded.parent_id,code=COALESCE(excluded.code,territories.code),name=excluded.name,updated_at=excluded.updated_at");s.b(1,id);bind_opt(s,2,parent);s.b(3,kind);bind_opt(s,4,code);s.b(5,name);s.b(6,ts);s.b(7,ts);s.row();return id;}
+struct TerritoryMatch { std::string ibge_code,municipality_name,uf,corede_code,corede_name,rf_code,rf_name,biome_predominant,biomes_occurring,dataset_version,source_planning,source_ecology,verified_at; };
+std::optional<TerritoryMatch> lookup_catalog(Db&d,const std::string&q){if(q.empty())return{};St s(d,"SELECT ibge_code,municipality_name,uf,corede_code,corede_name,rf_code,rf_name,biome_predominant,biomes_occurring,dataset_version,source_planning,source_ecology,verified_at FROM territorial_catalog WHERE ibge_code=? OR LOWER(municipality_name)=LOWER(?) LIMIT 1");s.b(1,q);s.b(2,q);if(!s.row())return{};return TerritoryMatch{s.str(0),s.str(1),s.str(2),s.str(3),s.str(4),s.str(5),s.str(6),s.str(7),s.str(8),s.str(9),s.str(10),s.str(11),s.str(12)};}
+std::string territory_chain(Db&d,json&j,const std::string&ts){
+  auto lookup_term=j.value("ibge_code","");
+  if(lookup_term.empty())lookup_term=j.value("municipality","");
+  auto match=lookup_catalog(d,lookup_term);
+  if(match){
+    j["ibge_code"]=match->ibge_code;
+    j["municipality"]=match->municipality_name;
+    if(!j.contains("corede")||j["corede"].empty()||j["corede"].is_null())j["corede"]=match->corede_name;
+    if(!j.contains("functional_region")||j["functional_region"].empty()||j["functional_region"].is_null())j["functional_region"]=match->rf_name;
+    if(!j.contains("biome_predominant")||j["biome_predominant"].empty()||j["biome_predominant"].is_null())j["biome_predominant"]=match->biome_predominant;
+    if(!j.contains("biomes_occurring")||j["biomes_occurring"].empty()||j["biomes_occurring"].is_null())j["biomes_occurring"]=match->biomes_occurring;
+  }
+  std::optional<std::string> rf_id;
+  auto rf=j.value("functional_region","");
+  if(!rf.empty())rf_id=territory(d,"functional_region",rf,{},ts);
+  std::optional<std::string> corede_id;
+  auto corede=j.value("corede","");
+  if(!corede.empty())corede_id=territory(d,"corede",corede,rf_id,ts);
+  auto municipality=j.value("municipality","");
+  if(municipality.empty())throw std::runtime_error("município é obrigatório");
+  auto ibge=j.value("ibge_code","");
+  return territory(d,"municipality",municipality,corede_id,ts,ibge.empty()?std::optional<std::string>{}:std::optional<std::string>{ibge});
+}
 std::string arg(int argc,char**argv,const std::string&name,const std::string&def=""){for(int i=1;i+1<argc;i++)if(argv[i]==name)return argv[i+1];return def;}
 std::string scalar(Db&d,const std::string&q){St s(d,q);return s.row()?s.str(0):"";}
 void audit(Db&d,const std::string&actor,const std::string&project,const std::string&type,const std::string&id,const std::string&action,const json&after){std::string prev=scalar(d,"SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1"),at=now(),payload=prev+actor+project+type+id+action+at+after.dump();St s(d,"INSERT INTO audit_events VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");s.b(1,"audit-"+random_hex(12));bind_opt(s,2,actor.empty()?std::optional<std::string>{}:actor);bind_opt(s,3,project.empty()?std::optional<std::string>{}:project);s.b(4,type);s.b(5,id);s.b(6,action);s.b(7,at);s.bn(8);s.b(9,after.dump());s.bn(10);s.b(11,prev);s.b(12,sha256(payload));s.row();}
@@ -48,7 +72,62 @@ std::string esc(std::string s){std::string o;for(char c:s){if(c=='&')o+="&amp;";
 }
 Paths paths(const fs::path&root,const fs::path&source){auto base=source.empty()?fs::current_path():source;return{root,root/"trama.sqlite3",root/"evidence",base/"migrations",base/"web"/"dist"};}
 void initialize(const Paths&p){fs::create_directories(p.root);fs::create_directories(p.evidence);Db d(p.db);migrate(d,p);}
-json overview(const Paths&p,std::optional<std::string>group,std::optional<std::string>unit,std::optional<std::string>project){Db d(p.db);std::string w=" WHERE project_id=?",q=project.value_or(scalar(d,"SELECT id FROM projects WHERE status != 'archived' ORDER BY created_at LIMIT 1"));if(group)w+=" AND project_group_id=?";if(unit)w+=" AND unit_id=?";St s(d,"SELECT count(*),coalesce(sum(total),0),coalesce(sum(women),0),coalesce(sum(men),0),coalesce(sum(youth),0) FROM v_attendance"+w);s.b(1,q);int n=2;if(group)s.b(n++,*group);if(unit)s.b(n++,*unit);s.row();auto total=s.num(1);St pending(d,"SELECT count(*) FROM action_items WHERE project_id=? AND deleted_at IS NULL AND status IN ('open','in_progress','blocked')");pending.b(1,q);pending.row();auto observation_status=rows(d,"SELECT validation_status status,count(*) count FROM observations o JOIN activities a ON a.id=o.activity_id WHERE a.project_id=? AND o.deleted_at IS NULL GROUP BY validation_status",[&](St&x){x.b(1,q);});json out;out["project_id"]=q;out["filters"]={{"group_id",group?json(*group):json(nullptr)},{"unit_id",unit?json(*unit):json(nullptr)}};out["kpis"]={{"uacs_documented",s.num(0)},{"reported_attendances",total},{"reported_women",s.num(2)},{"reported_men",s.num(3)},{"reported_youth",s.num(4)},{"female_share",total?json((double)s.num(2)*100/total):json(nullptr)},{"youth_share",total?json((double)s.num(4)*100/total):json(nullptr)},{"pending_action_items",pending.num(0)}};out["observations_by_status"]=observation_status;out["rule_version"]="attendance-v1";out["generated_at"]=now();return out;}
+json territorial_context(const Paths&p,const std::string&ibge_or_name){
+  Db d(p.db);
+  auto match=lookup_catalog(d,ibge_or_name);
+  if(!match)return json(nullptr);
+  json occurring=json::array();
+  try{occurring=json::parse(match->biomes_occurring);}catch(...){occurring.push_back(match->biome_predominant);}
+  return{
+    {"municipio",{{"codigo_ibge",match->ibge_code},{"nome",match->municipality_name},{"uf",match->uf}}},
+    {"planejamento",{{"corede",{{"codigo",match->corede_code},{"nome",match->corede_name}}},{"regiao_funcional",{{"codigo",match->rf_code},{"nome",match->rf_name}}}}},
+    {"ecologia",{{"bioma_predominante",match->biome_predominant},{"biomas_ocorrentes",occurring},{"criterio","predominancia_por_area"}}},
+    {"referencias",{{"planejamento",match->source_planning},{"ecologia",match->source_ecology}}},
+    {"dataset_version",match->dataset_version},
+    {"status","verified"}
+  };
+}
+json overview(const Paths&p,std::optional<std::string>group,std::optional<std::string>unit,std::optional<std::string>project,std::optional<std::string>corede,std::optional<std::string>functional_region,std::optional<std::string>biome){
+  Db d(p.db);
+  std::string w=" WHERE project_id=?",q=project.value_or(scalar(d,"SELECT id FROM projects WHERE status != 'archived' ORDER BY created_at LIMIT 1"));
+  std::vector<std::string>params={q};
+  if(group&&!group->empty()){w+=" AND project_group_id=?";params.push_back(*group);}
+  if(unit&&!unit->empty()){w+=" AND unit_id=?";params.push_back(*unit);}
+  if(corede&&!corede->empty()){w+=" AND corede=?";params.push_back(*corede);}
+  if(functional_region&&!functional_region->empty()){w+=" AND functional_region=?";params.push_back(*functional_region);}
+  if(biome&&!biome->empty()){w+=" AND (biome_predominant=? OR biomes_occurring LIKE ?)";params.push_back(*biome);params.push_back("%"+*biome+"%");}
+  St s(d,"SELECT count(*),coalesce(sum(total),0),coalesce(sum(women),0),coalesce(sum(men),0),coalesce(sum(youth),0) FROM v_attendance"+w);
+  for(size_t i=0;i<params.size();++i)s.b(i+1,params[i]);
+  s.row();
+  auto total=s.num(1);
+  St pending(d,"SELECT count(*) FROM action_items WHERE project_id=? AND deleted_at IS NULL AND status IN ('open','in_progress','blocked')");
+  pending.b(1,q);
+  pending.row();
+  auto observation_status=rows(d,"SELECT validation_status status,count(*) count FROM observations o JOIN activities a ON a.id=o.activity_id WHERE a.project_id=? AND o.deleted_at IS NULL GROUP BY validation_status",[&](St&x){x.b(1,q);});
+  json out;
+  out["project_id"]=q;
+  out["filters"]={
+    {"group_id",group?json(*group):json(nullptr)},
+    {"unit_id",unit?json(*unit):json(nullptr)},
+    {"corede",corede?json(*corede):json(nullptr)},
+    {"functional_region",functional_region?json(*functional_region):json(nullptr)},
+    {"biome",biome?json(*biome):json(nullptr)}
+  };
+  out["kpis"]={
+    {"uacs_documented",s.num(0)},
+    {"reported_attendances",total},
+    {"reported_women",s.num(2)},
+    {"reported_men",s.num(3)},
+    {"reported_youth",s.num(4)},
+    {"female_share",total?json((double)s.num(2)*100/total):json(nullptr)},
+    {"youth_share",total?json((double)s.num(4)*100/total):json(nullptr)},
+    {"pending_action_items",pending.num(0)}
+  };
+  out["observations_by_status"]=observation_status;
+  out["rule_version"]="attendance-v1";
+  out["generated_at"]=now();
+  return out;
+}
 void setup_admin(const Paths&p,const std::string&login,const std::string&display,const std::string&password){if(password.size()<12)throw std::runtime_error("password must have at least 12 characters");initialize(p);Db d(p.db);if(std::stoll(scalar(d,"SELECT count(*) FROM users WHERE system_role='admin' AND active=1"))>0)throw std::runtime_error("an active administrator already exists");St s(d,"INSERT INTO users VALUES(?,?,?,?,?,?,?,?)");auto id="user-"+random_hex(12),ts=now();s.b(1,id);s.b(2,login);s.b(3,display);s.b(4,password_hash(password));s.b(5,"admin");s.bi(6,1);s.b(7,ts);s.b(8,ts);s.row();audit(d,id,"","user",id,"bootstrap_admin",{{"login",login}});}
 void backup(const Paths&p,const fs::path&out){Db src(p.db),dst(out);sqlite3_backup*b=sqlite3_backup_init(dst.p,"main",src.p,"main");if(!b)throw std::runtime_error(sqlite3_errmsg(dst.p));int rc=sqlite3_backup_step(b,-1);sqlite3_backup_finish(b);if(rc!=SQLITE_DONE)throw std::runtime_error("backup failed");}
 json verify(const Paths&p){Db d(p.db);auto integrity=scalar(d,"PRAGMA integrity_check");auto fk=rows(d,"PRAGMA foreign_key_check");return{{"integrity",integrity},{"foreign_key_violations",fk.size()},{"journal_mode",scalar(d,"PRAGMA journal_mode")},{"migrations",std::stoll(scalar(d,"SELECT count(*) FROM schema_migrations"))},{"ok",integrity=="ok"&&fk.empty()}};}
@@ -65,14 +144,171 @@ int server_main(int argc,char**argv){std::string root=arg(argc,argv,"--data-dir"
  app.Delete(R"(/api/v1/projects/([A-Za-z0-9-]+))",[p](const httplib::Request&r,httplib::Response&z){Db d(p.db);auto u=require(d,r,z,true);if(!u)return;auto id=r.matches[1].str();St s(d,"UPDATE projects SET status='archived',deleted_at=?,updated_at=?,revision=revision+1 WHERE id=? AND deleted_at IS NULL");s.b(1,now());s.b(2,now());s.b(3,id);s.row();if(sqlite3_changes(d.p)==0)return error(z,404,"not_found","Projeto não encontrado");audit(d,u->id,id,"project",id,"delete",json::object());respond(z,{{"ok",true}});});
  app.Get("/api/v1/project-groups",[p](const httplib::Request&r,httplib::Response&z){Db d(p.db);if(!require(d,r,z))return;respond(z,{{"data",rows(d,"SELECT id,project_id,code,label,external_reference FROM project_groups WHERE project_id=? ORDER BY code",[&](St&s){s.b(1,r.get_param_value("project_id"));})}});});
  app.Get("/api/v1/territories",[p](const httplib::Request&r,httplib::Response&z){Db d(p.db);if(!require(d,r,z))return;respond(z,{{"data",rows(d,"SELECT id,kind,code,name FROM territories ORDER BY name")}});});
- app.Get("/api/v1/units",[p](const httplib::Request&r,httplib::Response&z){Db d(p.db);if(!require(d,r,z))return;respond(z,{{"data",rows(d,"SELECT u.id,u.project_id,u.project_group_id,u.code,u.name,u.unit_type,u.status,u.revision,u.latitude,u.longitude,m.name municipality,c.name corede,rf.name functional_region,b.name biome FROM units u JOIN territories m ON m.id=u.territory_id LEFT JOIN territories c ON c.id=m.parent_id AND c.kind='corede' LEFT JOIN territories rf ON rf.id=c.parent_id AND rf.kind='functional_region' LEFT JOIN territories b ON b.id=rf.parent_id AND b.kind='biome' WHERE u.project_id=? AND u.deleted_at IS NULL ORDER BY u.name",[&](St&s){s.b(1,r.get_param_value("project_id"));})}});});
- app.Post("/api/v1/units",[p](const httplib::Request&r,httplib::Response&z){try{Db d(p.db);auto u=require(d,r,z,true);if(!u)return;auto j=json::parse(r.body);if(j.value("project_id","").empty()||j.value("code","").empty()||j.value("name","").empty()||j.value("municipality","").empty())return error(z,422,"validation_error","Projeto, código, nome e município são obrigatórios");auto id="unit-"+random_hex(12),ts=now();d.exec("BEGIN IMMEDIATE");try{auto tid=territory_chain(d,j,ts);St s(d,"INSERT INTO units(id,project_id,territory_id,project_group_id,code,name,unit_type,status,created_at,updated_at,revision,latitude,longitude) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,?)");s.b(1,id);s.b(2,j["project_id"]);s.b(3,tid);bind_opt(s,4,j.contains("project_group_id")&&!j["project_group_id"].is_null()?std::optional<std::string>(j["project_group_id"]):std::nullopt);s.b(5,j["code"]);s.b(6,j["name"]);s.b(7,j.value("unit_type","monitoring_unit"));s.b(8,j.value("status","active"));s.b(9,ts);s.b(10,ts);bind_number_or_null(s,11,j,"latitude");bind_number_or_null(s,12,j,"longitude");s.row();audit(d,u->id,j["project_id"],"unit",id,"create",j);d.exec("COMMIT");respond(z,{{"data",{{"id",id},{"revision",1}}}},201);}catch(...){d.exec("ROLLBACK");throw;}}catch(const std::exception&e){error(z,422,"validation_error",e.what());}});
- app.Get(R"(/api/v1/units/([A-Za-z0-9-]+))",[p](const httplib::Request&r,httplib::Response&z){Db d(p.db);if(!require(d,r,z))return;auto a=rows(d,"SELECT u.id,u.project_id,u.project_group_id,u.code,u.name,u.unit_type,u.status,u.revision,u.latitude,u.longitude,m.name municipality,c.name corede,rf.name functional_region,b.name biome FROM units u JOIN territories m ON m.id=u.territory_id LEFT JOIN territories c ON c.id=m.parent_id AND c.kind='corede' LEFT JOIN territories rf ON rf.id=c.parent_id AND rf.kind='functional_region' LEFT JOIN territories b ON b.id=rf.parent_id AND b.kind='biome' WHERE u.id=? AND u.deleted_at IS NULL",[&](St&s){s.b(1,r.matches[1]);});if(a.empty())return error(z,404,"not_found","Unidade não encontrada");respond(z,{{"data",a[0]}});});
- app.Patch(R"(/api/v1/units/([A-Za-z0-9-]+))",[p](const httplib::Request&r,httplib::Response&z){try{Db d(p.db);auto u=require(d,r,z,true);if(!u)return;auto j=json::parse(r.body);auto id=r.matches[1].str();int rev=j.value("revision",0);St old(d,"SELECT u.project_id,u.code,u.name,u.unit_type,u.status,u.revision,u.territory_id,m.name municipality,c.name corede,rf.name functional_region,b.name biome FROM units u JOIN territories m ON m.id=u.territory_id LEFT JOIN territories c ON c.id=m.parent_id AND c.kind='corede' LEFT JOIN territories rf ON rf.id=c.parent_id AND rf.kind='functional_region' LEFT JOIN territories b ON b.id=rf.parent_id AND b.kind='biome' WHERE u.id=? AND u.deleted_at IS NULL");old.b(1,id);if(!old.row())return error(z,404,"not_found","Unidade não encontrada");if(rev!=old.num(5))return error(z,409,"revision_conflict","Revisão desatualizada");d.exec("BEGIN IMMEDIATE");try{if(!j.contains("municipality"))j["municipality"]=old.str(7);if(!j.contains("corede"))j["corede"]=old.str(8);if(!j.contains("functional_region"))j["functional_region"]=old.str(9);if(!j.contains("biome"))j["biome"]=old.str(10);auto tid=territory_chain(d,j,now());St s(d,"UPDATE units SET code=?,name=?,unit_type=?,status=?,territory_id=?,latitude=COALESCE(?,latitude),longitude=COALESCE(?,longitude),updated_at=?,revision=revision+1 WHERE id=? AND revision=?");s.b(1,j.value("code",old.str(1)));s.b(2,j.value("name",old.str(2)));s.b(3,j.value("unit_type",old.str(3)));s.b(4,j.value("status",old.str(4)));s.b(5,tid);bind_number_or_null(s,6,j,"latitude");bind_number_or_null(s,7,j,"longitude");s.b(8,now());s.b(9,id);s.bi(10,rev);s.row();audit(d,u->id,old.str(0),"unit",id,"update",j);d.exec("COMMIT");respond(z,{{"data",{{"id",id},{"revision",rev+1}}}});}catch(...){d.exec("ROLLBACK");throw;}}catch(const std::exception&e){error(z,422,"validation_error",e.what());}});
- app.Delete(R"(/api/v1/units/([A-Za-z0-9-]+))",[p](const httplib::Request&r,httplib::Response&z){Db d(p.db);auto u=require(d,r,z,true);if(!u)return;auto id=r.matches[1].str();St old(d,"SELECT project_id FROM units WHERE id=? AND deleted_at IS NULL");old.b(1,id);if(!old.row())return error(z,404,"not_found","Unidade não encontrada");St s(d,"UPDATE units SET status='inactive',deleted_at=?,updated_at=?,revision=revision+1 WHERE id=?");s.b(1,now());s.b(2,now());s.b(3,id);s.row();audit(d,u->id,old.str(0),"unit",id,"delete",json::object());respond(z,{{"ok",true}});});
+ app.Get("/api/v1/territories/catalog",[p](const httplib::Request&r,httplib::Response&z){
+   Db d(p.db);if(!require(d,r,z))return;
+   std::string q="SELECT ibge_code,municipality_name,uf,corede_code,corede_name,rf_code,rf_name,biome_predominant,biomes_occurring,dataset_version,source_planning,source_ecology,verified_at FROM territorial_catalog WHERE 1=1";
+   std::vector<std::string> params;
+   if(r.has_param("q")&&!r.get_param_value("q").empty()){
+     q+=" AND (LOWER(municipality_name) LIKE ? OR ibge_code LIKE ?)";
+     std::string pattern="%"+r.get_param_value("q")+"%";
+     params.push_back(pattern);
+     params.push_back(pattern);
+   }
+   if(r.has_param("corede")&&!r.get_param_value("corede").empty()){
+     q+=" AND (corede_name=? OR corede_code=?)";
+     params.push_back(r.get_param_value("corede"));
+     params.push_back(r.get_param_value("corede"));
+   }
+   if(r.has_param("functional_region")&&!r.get_param_value("functional_region").empty()){
+     q+=" AND (rf_name=? OR rf_code=?)";
+     params.push_back(r.get_param_value("functional_region"));
+     params.push_back(r.get_param_value("functional_region"));
+   }
+   if(r.has_param("biome")&&!r.get_param_value("biome").empty()){
+     q+=" AND (biome_predominant=? OR biomes_occurring LIKE ?)";
+     params.push_back(r.get_param_value("biome"));
+     params.push_back("%"+r.get_param_value("biome")+"%");
+   }
+   q+=" ORDER BY municipality_name LIMIT 500";
+   respond(z,{{"data",rows(d,q,[&](St&s){for(size_t i=0;i<params.size();++i)s.b(i+1,params[i]);})}});
+ });
+ app.Get("/api/v1/territories/dimensions",[p](const httplib::Request&r,httplib::Response&z){
+   Db d(p.db);if(!require(d,r,z))return;
+   auto coredes=rows(d,"SELECT DISTINCT corede_name name,corede_code code FROM territorial_catalog ORDER BY corede_name");
+   auto rfs=rows(d,"SELECT DISTINCT rf_name name,rf_code code FROM territorial_catalog ORDER BY rf_name");
+   auto biomes=rows(d,"SELECT DISTINCT biome_predominant name FROM territorial_catalog ORDER BY biome_predominant");
+   respond(z,{{"data",{{"coredes",coredes},{"functional_regions",rfs},{"biomes",biomes}}}});
+ });
+ app.Get(R"(/api/v1/territories/context/([0-9]{7}))",[p](const httplib::Request&r,httplib::Response&z){
+   Db d(p.db);if(!require(d,r,z))return;
+   auto ctx=territorial_context(p,r.matches[1].str());
+   if(ctx.is_null())return error(z,404,"not_found","Município não encontrado no catálogo territorial");
+   respond(z,{{"data",ctx}});
+ });
+ app.Get("/api/v1/territories/lookup",[p](const httplib::Request&r,httplib::Response&z){
+   Db d(p.db);if(!require(d,r,z))return;
+   std::string term=r.has_param("ibge")?r.get_param_value("ibge"):r.get_param_value("q");
+   if(term.empty()&&r.has_param("name"))term=r.get_param_value("name");
+   auto ctx=territorial_context(p,term);
+   if(ctx.is_null())return error(z,404,"not_found","Município não encontrado no catálogo territorial");
+   respond(z,{{"data",ctx}});
+ });
+ app.Get("/api/v1/units",[p](const httplib::Request&r,httplib::Response&z){
+   Db d(p.db);if(!require(d,r,z))return;
+   respond(z,{{"data",rows(d,"SELECT u.id,u.project_id,u.project_group_id,u.code,u.name,u.unit_type,u.status,u.revision,u.latitude,u.longitude,u.ibge_code,m.name municipality,c.name corede,rf.name functional_region,COALESCE(u.biome_predominant,b.name) biome,u.biome_predominant,u.biomes_occurring FROM units u JOIN territories m ON m.id=u.territory_id LEFT JOIN territories c ON c.id=m.parent_id AND c.kind='corede' LEFT JOIN territories rf ON rf.id=c.parent_id AND rf.kind='functional_region' LEFT JOIN territories b ON b.id=rf.parent_id AND b.kind='biome' WHERE u.project_id=? AND u.deleted_at IS NULL ORDER BY u.name",[&](St&s){s.b(1,r.get_param_value("project_id"));})}});
+ });
+ app.Post("/api/v1/units",[p](const httplib::Request&r,httplib::Response&z){
+   try{
+     Db d(p.db);auto u=require(d,r,z,true);if(!u)return;
+     auto j=json::parse(r.body);
+     if(j.value("project_id","").empty()||j.value("code","").empty()||j.value("name","").empty()||(j.value("municipality","").empty()&&j.value("ibge_code","").empty()))return error(z,422,"validation_error","Projeto, código, nome e município são obrigatórios");
+     auto id="unit-"+random_hex(12),ts=now();
+     d.exec("BEGIN IMMEDIATE");
+     try{
+       auto tid=territory_chain(d,j,ts);
+       St s(d,"INSERT INTO units(id,project_id,territory_id,project_group_id,code,name,unit_type,status,created_at,updated_at,revision,latitude,longitude,ibge_code,biome_predominant,biomes_occurring) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?)");
+       s.b(1,id);s.b(2,j["project_id"]);s.b(3,tid);
+       bind_opt(s,4,j.contains("project_group_id")&&!j["project_group_id"].is_null()?std::optional<std::string>(j["project_group_id"]):std::nullopt);
+       s.b(5,j["code"]);s.b(6,j["name"]);
+       s.b(7,j.value("unit_type","monitoring_unit"));s.b(8,j.value("status","active"));
+       s.b(9,ts);s.b(10,ts);
+       bind_number_or_null(s,11,j,"latitude");bind_number_or_null(s,12,j,"longitude");
+       bind_opt(s,13,j.contains("ibge_code")&&!j["ibge_code"].is_null()?std::optional<std::string>(j["ibge_code"]):std::nullopt);
+       bind_opt(s,14,j.contains("biome_predominant")&&!j["biome_predominant"].is_null()?std::optional<std::string>(j["biome_predominant"]):std::nullopt);
+       bind_opt(s,15,j.contains("biomes_occurring")&&!j["biomes_occurring"].is_null()?(j["biomes_occurring"].is_string()?std::optional<std::string>(j["biomes_occurring"]):std::optional<std::string>(j["biomes_occurring"].dump())):std::nullopt);
+       s.row();
+       audit(d,u->id,j["project_id"],"unit",id,"create",j);
+       d.exec("COMMIT");
+       respond(z,{{"data",{{"id",id},{"revision",1}}}},201);
+     }catch(...){d.exec("ROLLBACK");throw;}
+   }catch(const std::exception&e){error(z,422,"validation_error",e.what());}
+ });
+ app.Get(R"(/api/v1/units/([A-Za-z0-9-]+))",[p](const httplib::Request&r,httplib::Response&z){
+   Db d(p.db);if(!require(d,r,z))return;
+   auto a=rows(d,"SELECT u.id,u.project_id,u.project_group_id,u.code,u.name,u.unit_type,u.status,u.revision,u.latitude,u.longitude,u.ibge_code,m.name municipality,c.name corede,rf.name functional_region,COALESCE(u.biome_predominant,b.name) biome,u.biome_predominant,u.biomes_occurring FROM units u JOIN territories m ON m.id=u.territory_id LEFT JOIN territories c ON c.id=m.parent_id AND c.kind='corede' LEFT JOIN territories rf ON rf.id=c.parent_id AND rf.kind='functional_region' LEFT JOIN territories b ON b.id=rf.parent_id AND b.kind='biome' WHERE u.id=? AND u.deleted_at IS NULL",[&](St&s){s.b(1,r.matches[1]);});
+   if(a.empty())return error(z,404,"not_found","Unidade não encontrada");
+   respond(z,{{"data",a[0]}});
+ });
+ app.Patch(R"(/api/v1/units/([A-Za-z0-9-]+))",[p](const httplib::Request&r,httplib::Response&z){
+   try{
+     Db d(p.db);auto u=require(d,r,z,true);if(!u)return;
+     auto j=json::parse(r.body);auto id=r.matches[1].str();int rev=j.value("revision",0);
+     St old(d,"SELECT u.project_id,u.code,u.name,u.unit_type,u.status,u.revision,u.territory_id,m.name municipality,c.name corede,rf.name functional_region,u.biome_predominant,u.ibge_code,u.biomes_occurring FROM units u JOIN territories m ON m.id=u.territory_id LEFT JOIN territories c ON c.id=m.parent_id AND c.kind='corede' LEFT JOIN territories rf ON rf.id=c.parent_id AND rf.kind='functional_region' WHERE u.id=? AND u.deleted_at IS NULL");
+     old.b(1,id);
+     if(!old.row())return error(z,404,"not_found","Unidade não encontrada");
+     if(rev!=old.num(5))return error(z,409,"revision_conflict","Revisão desatualizada");
+     d.exec("BEGIN IMMEDIATE");
+     try{
+       if(!j.contains("municipality"))j["municipality"]=old.str(7);
+       if(!j.contains("corede"))j["corede"]=old.str(8);
+       if(!j.contains("functional_region"))j["functional_region"]=old.str(9);
+       if(!j.contains("biome_predominant"))j["biome_predominant"]=old.str(10);
+       if(!j.contains("ibge_code")&&!old.null(11))j["ibge_code"]=old.str(11);
+       if(!j.contains("biomes_occurring")&&!old.null(12))j["biomes_occurring"]=old.str(12);
+       auto tid=territory_chain(d,j,now());
+       St s(d,"UPDATE units SET code=?,name=?,unit_type=?,status=?,territory_id=?,latitude=COALESCE(?,latitude),longitude=COALESCE(?,longitude),ibge_code=COALESCE(?,ibge_code),biome_predominant=COALESCE(?,biome_predominant),biomes_occurring=COALESCE(?,biomes_occurring),updated_at=?,revision=revision+1 WHERE id=? AND revision=?");
+       s.b(1,j.value("code",old.str(1)));
+       s.b(2,j.value("name",old.str(2)));
+       s.b(3,j.value("unit_type",old.str(3)));
+       s.b(4,j.value("status",old.str(4)));
+       s.b(5,tid);
+       bind_number_or_null(s,6,j,"latitude");
+       bind_number_or_null(s,7,j,"longitude");
+       bind_opt(s,8,j.contains("ibge_code")&&!j["ibge_code"].is_null()?std::optional<std::string>(j["ibge_code"]):std::nullopt);
+       bind_opt(s,9,j.contains("biome_predominant")&&!j["biome_predominant"].is_null()?std::optional<std::string>(j["biome_predominant"]):std::nullopt);
+       bind_opt(s,10,j.contains("biomes_occurring")&&!j["biomes_occurring"].is_null()?(j["biomes_occurring"].is_string()?std::optional<std::string>(j["biomes_occurring"]):std::optional<std::string>(j["biomes_occurring"].dump())):std::nullopt);
+       s.b(11,now());
+       s.b(12,id);
+       s.bi(13,rev);
+       s.row();
+       audit(d,u->id,old.str(0),"unit",id,"update",j);
+       d.exec("COMMIT");
+       respond(z,{{"data",{{"id",id},{"revision",rev+1}}}});
+     }catch(...){d.exec("ROLLBACK");throw;}
+   }catch(const std::exception&e){error(z,422,"validation_error",e.what());}
+ });
+ app.Delete(R"(/api/v1/units/([A-Za-z0-9-]+))",[p](const httplib::Request&r,httplib::Response&z){
+   Db d(p.db);auto u=require(d,r,z,true);if(!u)return;
+   auto id=r.matches[1].str();
+   St old(d,"SELECT project_id FROM units WHERE id=? AND deleted_at IS NULL");
+   old.b(1,id);
+   if(!old.row())return error(z,404,"not_found","Unidade não encontrada");
+   St s(d,"UPDATE units SET status='inactive',deleted_at=?,updated_at=?,revision=revision+1 WHERE id=?");
+   s.b(1,now());s.b(2,now());s.b(3,id);s.row();
+   audit(d,u->id,old.str(0),"unit",id,"delete",json::object());
+   respond(z,{{"ok",true}});
+ });
  app.Get("/api/v1/sources",[p](const httplib::Request&r,httplib::Response&z){Db d(p.db);if(!require(d,r,z))return;respond(z,{{"data",rows(d,"SELECT id,project_id,title,kind,external_name,sha256,reference_period,provenance_status FROM source_documents ORDER BY created_at DESC")}});});
- app.Get("/api/v1/analytics/overview",[p](const httplib::Request&r,httplib::Response&z){Db d(p.db);if(!require(d,r,z))return;std::optional<std::string>g,u;if(r.has_param("group_id")&&!r.get_param_value("group_id").empty())g=r.get_param_value("group_id");if(r.has_param("unit_id")&&!r.get_param_value("unit_id").empty())u=r.get_param_value("unit_id");respond(z,overview(p,g,u,r.has_param("project_id")?std::optional<std::string>(r.get_param_value("project_id")):std::nullopt));});
- app.Get("/api/v1/analytics/units",[p](const httplib::Request&r,httplib::Response&z){Db d(p.db);if(!require(d,r,z))return;std::string q="SELECT unit_id,unit_name,municipality,project_group_id,group_code,total,women,men,youth,quality_status,source_locator FROM v_attendance WHERE project_id=?",g=r.get_param_value("group_id"),u=r.get_param_value("unit_id");if(!g.empty())q+=" AND project_group_id=?";if(!u.empty())q+=" AND unit_id=?";q+=" ORDER BY unit_name";respond(z,{{"data",rows(d,q,[&](St&s){s.b(1,r.get_param_value("project_id"));int i=2;if(!g.empty())s.b(i++,g);if(!u.empty())s.b(i,u);})}});});
+ app.Get("/api/v1/analytics/overview",[p](const httplib::Request&r,httplib::Response&z){
+   Db d(p.db);if(!require(d,r,z))return;
+   std::optional<std::string>g,u,c,rf,b;
+   if(r.has_param("group_id")&&!r.get_param_value("group_id").empty())g=r.get_param_value("group_id");
+   if(r.has_param("unit_id")&&!r.get_param_value("unit_id").empty())u=r.get_param_value("unit_id");
+   if(r.has_param("corede")&&!r.get_param_value("corede").empty())c=r.get_param_value("corede");
+   if(r.has_param("functional_region")&&!r.get_param_value("functional_region").empty())rf=r.get_param_value("functional_region");
+   if(r.has_param("biome")&&!r.get_param_value("biome").empty())b=r.get_param_value("biome");
+   respond(z,overview(p,g,u,r.has_param("project_id")?std::optional<std::string>(r.get_param_value("project_id")):std::nullopt,c,rf,b));
+ });
+ app.Get("/api/v1/analytics/units",[p](const httplib::Request&r,httplib::Response&z){
+   Db d(p.db);if(!require(d,r,z))return;
+   std::string q="SELECT unit_id,unit_name,municipality,ibge_code,corede,functional_region,biome_predominant,project_group_id,group_code,total,women,men,youth,quality_status,source_locator FROM v_attendance WHERE project_id=?";
+   std::vector<std::string>params={r.get_param_value("project_id")};
+   if(r.has_param("group_id")&&!r.get_param_value("group_id").empty()){q+=" AND project_group_id=?";params.push_back(r.get_param_value("group_id"));}
+   if(r.has_param("unit_id")&&!r.get_param_value("unit_id").empty()){q+=" AND unit_id=?";params.push_back(r.get_param_value("unit_id"));}
+   if(r.has_param("corede")&&!r.get_param_value("corede").empty()){q+=" AND corede=?";params.push_back(r.get_param_value("corede"));}
+   if(r.has_param("functional_region")&&!r.get_param_value("functional_region").empty()){q+=" AND functional_region=?";params.push_back(r.get_param_value("functional_region"));}
+   if(r.has_param("biome")&&!r.get_param_value("biome").empty()){q+=" AND (biome_predominant=? OR biomes_occurring LIKE ?)";params.push_back(r.get_param_value("biome"));params.push_back("%"+r.get_param_value("biome")+"%");}
+   q+=" ORDER BY unit_name";
+   respond(z,{{"data",rows(d,q,[&](St&s){for(size_t i=0;i<params.size();++i)s.b(i+1,params[i]);})}});
+ });
+ app.Get("/api/v1/analytics/dimensions",[p](const httplib::Request&r,httplib::Response&z){
+   Db d(p.db);if(!require(d,r,z))return;
+   auto pid=r.get_param_value("project_id");
+   auto coredes=rows(d,"SELECT DISTINCT c.name FROM units u JOIN territories m ON m.id=u.territory_id JOIN territories c ON c.id=m.parent_id AND c.kind='corede' WHERE u.project_id=? AND u.deleted_at IS NULL ORDER BY c.name",[&](St&s){s.b(1,pid);});
+   auto rfs=rows(d,"SELECT DISTINCT rf.name FROM units u JOIN territories m ON m.id=u.territory_id JOIN territories c ON c.id=m.parent_id AND c.kind='corede' JOIN territories rf ON rf.id=c.parent_id AND rf.kind='functional_region' WHERE u.project_id=? AND u.deleted_at IS NULL ORDER BY rf.name",[&](St&s){s.b(1,pid);});
+   auto biomes=rows(d,"SELECT DISTINCT biome_predominant name FROM units WHERE project_id=? AND deleted_at IS NULL AND biome_predominant IS NOT NULL ORDER BY biome_predominant",[&](St&s){s.b(1,pid);});
+   respond(z,{{"data",{{"coredes",coredes},{"functional_regions",rfs},{"biomes",biomes}}}});
+ });
  app.Get("/api/v1/analytics/groups",[p](const httplib::Request&r,httplib::Response&z){Db d(p.db);if(!require(d,r,z))return;respond(z,{{"data",rows(d,"SELECT project_group_id id,group_code code,sum(total) total,sum(women) women,sum(men) men,sum(youth) youth FROM v_attendance WHERE project_id=? GROUP BY project_group_id,group_code ORDER BY group_code",[&](St&s){s.b(1,r.get_param_value("project_id"));})}});});
  auto list=[p](const char*table,const char*cols){return [p,table=std::string(table),cols=std::string(cols)](const httplib::Request&r,httplib::Response&z){Db d(p.db);if(!require(d,r,z))return;std::string q="SELECT "+cols+" FROM "+table+" WHERE project_id=? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 200";respond(z,{{"data",rows(d,q,[&](St&s){s.b(1,r.get_param_value("project_id"));})}});};};
  app.Get("/api/v1/activities",list("activities","id,project_id,unit_id,kind,title,description,occurred_at,status,created_at,updated_at,revision"));
