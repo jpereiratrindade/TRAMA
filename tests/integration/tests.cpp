@@ -17,6 +17,8 @@ int main(int argc, char** argv) {
     ok(status["migrations"] == 4, "migrations");
     auto empty = overview(p);
     ok(empty["kpis"]["reported_attendances"] == 0, "empty analytics");
+    ok(empty["kpis"]["pending_action_items"] == 0, "empty pending actions");
+    ok(empty["observations_by_status"].is_array(), "observation status contract");
     setup_admin(p, "admin", "Administrador", "correct-horse-battery-staple");
     auto out = tmp / "backup.sqlite3";
     backup(p, out);
