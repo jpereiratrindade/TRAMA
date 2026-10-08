@@ -1,0 +1,7 @@
+/build/
+/var/
+/web/node_modules/
+/web/dist/
+seed/private-*.json
+*.sqlite3
+*.tar.gz
