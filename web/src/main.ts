@@ -293,49 +293,41 @@ async function units() {
   view('Territórios e Unidades', `
     <button id="new">Nova unidade</button>
     <section class="panel" id="form"></section>
-    <section class="panel">
-      <h2>Mapa territorial das unidades</h2>
-      <p class="muted">Mapa Leaflet com base offline. Município, COREDE, RF e biomas mantêm a versão, proveniência e cobertura declaradas pelo TRAMA-RS.</p>
+    ${located.length ? `<section class="panel">
+      <h2>Mapa das unidades com coordenadas</h2>
+      <p class="muted">O mapa mostra somente coordenadas cadastradas. Nenhuma posição é estimada pelo município.</p>
       <div id="unit-map" aria-label="Mapa das unidades"></div>
-      ${located.length ? '' : '<p>Nenhuma unidade possui coordenadas informadas.</p>'}
-    </section>
+    </section>` : `<section class="notice map-empty">
+      <b>Mapa ainda sem pontos</b>
+      <span>As ${unitsRes.data.length} unidades não possuem latitude e longitude informadas. O mapa será exibido quando houver ao menos uma coordenada cadastrada.</span>
+    </section>`}
     <section class="panel">
       <h2>Unidades cadastradas (${unitsRes.data.length})</h2>
-      ${unitsRes.data.length ? unitsRes.data.map((x: J) => `
-        <article class="record">
-          <b>${h(x.name)} <span class="badge verified">${x.ibge_code ? `IBGE ${h(x.ibge_code)}` : 'Sem IBGE'}</span></b>
-          <span><b>Município:</b> ${h(x.municipality)} · <b>COREDE:</b> ${h(x.corede || 'Não informado')} · <b>Região Funcional:</b> ${h(x.functional_region || 'Não informada')}</span>
-          <span><b>Bioma Predominante:</b> ${h(x.biome_predominant || x.biome || 'Não informado')} ${x.biomes_occurring ? `· <b>Ocorrência:</b> ${h(x.biomes_occurring)}` : ''}</span>
-          <span><b>Coordenadas:</b> ${x.latitude ?? '—'}, ${x.longitude ?? '—'} · <b>Revisão:</b> ${x.revision}</span>
-          <div style="margin-top: .5rem;">
-            <button data-edit='${encodeURIComponent(JSON.stringify(x))}' class="secondary">Editar</button>
-            <button data-delete="${h(x.id)}" class="danger">Excluir</button>
-          </div>
-        </article>
-      `).join('') : '<p>Nenhuma unidade cadastrada neste projeto.</p>'}
+      ${unitsRes.data.length ? `<div class="scroll"><table class="units-table"><thead><tr><th>Unidade</th><th>Município</th><th>COREDE / RF</th><th>Localização</th><th><span class="sr-only">Ações</span></th></tr></thead><tbody>${unitsRes.data.map((x: J) => `
+        <tr>
+          <td><b>${h(x.name)}</b><small>${h(x.code || '')}</small></td>
+          <td>${h(x.municipality)}</td>
+          <td>${h(x.corede || 'Pendente')}<small>${h(x.functional_region || 'RF pendente')}</small></td>
+          <td>${x.latitude !== null && x.longitude !== null ? `${h(x.latitude)}, ${h(x.longitude)}` : '<span class="muted">Sem coordenadas</span>'}</td>
+          <td class="row-actions"><button data-edit='${encodeURIComponent(JSON.stringify(x))}' class="secondary">Editar</button><button data-delete="${h(x.id)}" class="danger">Excluir</button></td>
+        </tr>`).join('')}</tbody></table></div>` : '<p>Nenhuma unidade cadastrada neste projeto.</p>'}
     </section>
   `);
 
-  const map = L.map('unit-map', { attributionControl: false, minZoom: 2, maxZoom: 18 }).setView([-30, -53], 6);
-  map.getContainer().classList.add('offline-map');
-
-  const bounds: L.LatLngExpression[] = [];
-  for (const x of located) {
-    const point: [number, number] = [Number(x.latitude), Number(x.longitude)];
-    bounds.push(point);
-    L.circleMarker(point, { radius: 8, color: '#173f35', fillColor: '#2b8068', fillOpacity: .85, weight: 2 })
-      .addTo(map)
-      .bindPopup(`
-        <b>${h(x.name)}</b><br>
-        <b>Município:</b> ${h(x.municipality)} ${x.ibge_code ? `(${h(x.ibge_code)})` : ''}<br>
-        <b>COREDE:</b> ${h(x.corede)}<br>
-        <b>Região Funcional:</b> ${h(x.functional_region)}<br>
-        <b>Bioma Predominante:</b> ${h(x.biome_predominant || x.biome)}<br>
-        ${x.biomes_occurring ? `<small>Biomas ocorrentes: ${h(x.biomes_occurring)}</small>` : ''}
-      `);
+  if (located.length) {
+    const map = L.map('unit-map', { attributionControl: false, minZoom: 2, maxZoom: 18 }).setView([-30, -53], 6);
+    map.getContainer().classList.add('offline-map');
+    const bounds: L.LatLngExpression[] = [];
+    for (const x of located) {
+      const point: [number, number] = [Number(x.latitude), Number(x.longitude)];
+      bounds.push(point);
+      L.circleMarker(point, { radius: 8, color: '#173f35', fillColor: '#2b8068', fillOpacity: .85, weight: 2 })
+        .addTo(map)
+        .bindPopup(`<b>${h(x.name)}</b><br>${h(x.municipality)}<br><small>${h(x.corede || '')} · ${h(x.functional_region || '')}</small>`);
+    }
+    map.fitBounds(L.latLngBounds(bounds), { padding: [30, 30], maxZoom: 12 });
+    setTimeout(() => map.invalidateSize(), 50);
   }
-  if (bounds.length) map.fitBounds(L.latLngBounds(bounds), { padding: [30, 30], maxZoom: 12 });
-  setTimeout(() => map.invalidateSize(), 50);
 
   const render = (x: J = {}) => {
     document.querySelector('#form')!.innerHTML = `

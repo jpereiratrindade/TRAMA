@@ -50,6 +50,13 @@ main>header small{color:#587068}
 .scroll{overflow:auto}
 table{width:100%;border-collapse:collapse}
 th,td{padding:.65rem;border-bottom:1px solid #dce4df;text-align:left;white-space:nowrap}
+.units-table small{display:block;color:#587068;margin-top:.2rem}
+.units-table th:last-child,.units-table td:last-child{text-align:right}
+.row-actions{display:flex;justify-content:flex-end;gap:.4rem}
+.row-actions button{padding:.45rem .65rem}
+.map-empty{display:grid;gap:.25rem}
+.map-empty span{color:#587068}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .record{padding:1rem 0;border-bottom:1px solid #dce4df}
 .record:last-child{border:0}
 .record b,.record span{display:block}
@@ -68,4 +75,5 @@ th,td{padding:.65rem;border-bottom:1px solid #dce4df;text-align:left;white-space
   .cards{grid-template-columns:1fr}
   .chart div{grid-template-columns:120px 1fr 35px}
   .badge{display:none}
+  .units-table th:nth-child(3),.units-table td:nth-child(3),.units-table th:nth-child(4),.units-table td:nth-child(4){display:none}
 }
