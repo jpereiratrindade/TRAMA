@@ -32,6 +32,8 @@ Login/logout, sessão server-side e CSRF; dashboard persistido com seletor de pr
 
 O catálogo territorial é consumido exclusivamente do **TRAMA-RS**. O endpoint padrão é `http://10.163.80.176:8080` e pode ser substituído com `TRAMA_RS_URL`. O TRAMA preserva o status de validação, a versão e campos `null` recebidos; não usa fallback inferido. No catálogo preliminar atual, filtros de bioma permanecem indisponíveis e retornam conflito explícito.
 
+Ao iniciar, o servidor reconcilia as unidades já cadastradas por correspondência nominal exata com o TRAMA-RS. COREDE e Região Funcional são atualizados; código IBGE e biomas continuam nulos quando o serviço de referência ainda não os confirmou. Nomes não conciliados são relatados no log e não são corrigidos automaticamente.
+
 Dados operacionais e resultados de projetos não fazem parte do repositório público. Crie projetos pela interface/API e mantenha bases SQLite e arquivos privados fora do Git.
 
 Limitações conhecidas: o TRAMA-RS precisa estar acessível durante pesquisas e novos cadastros territoriais; cache offline validado ainda não foi implementado. Upload/download de evidências, gestão completa de usuários/papéis e suíte Playwright ainda não estão integrados. HTTPS LAN requer implementação/configuração adicional; por segurança, o servidor TRAMA recusa bind não-loopback. PDF usa impressão do navegador.
