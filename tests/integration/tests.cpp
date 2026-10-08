@@ -14,7 +14,7 @@ int main(int argc, char** argv) {
     auto status = verify(p);
     ok(status["ok"], "integrity");
     ok(status["journal_mode"] == "wal", "WAL");
-    ok(status["migrations"] == 4, "migrations");
+    ok(status["migrations"] == 5, "migrations");
     auto empty = overview(p);
     ok(empty["kpis"]["reported_attendances"] == 0, "empty analytics");
     ok(empty["kpis"]["pending_action_items"] == 0, "empty pending actions");

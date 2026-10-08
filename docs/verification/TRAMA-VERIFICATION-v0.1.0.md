@@ -8,12 +8,13 @@ Data: 2026-10-08. Ambiente: Fedora, GCC 16.2.1 (`-std=gnu++26`), CMake 4.3, SQLi
 - CTest: 1/1 passou no ambiente indicado. Antes da publicação, a suíte foi alterada para não conter resultados operacionais.
 - Runtime HTTP real: health, login, sessão/CSRF, criação de atividade, observação e encaminhamento, relatório HTML e CSV.
 - Reinício real do servidor: a atividade criada continuou disponível (`1` ocorrência).
-- `verify`: integrity `ok`, zero violações FK, WAL e quatro migrações.
+- `verify`: integrity `ok`, zero violações FK, WAL e cinco migrações.
 - Backup real: 192 KiB via `sqlite3_backup`.
 - `npm audit --omit=dev`: zero vulnerabilidades de runtime (o frontend não possui dependências runtime).
 - Pacote local: `build/TRAMA-0.1.0-linux.tar.gz`.
 - CRUD HTTP verificado com dados sintéticos: create/read/update/delete de projeto, unidade, atividade, observação e encaminhamento; 16 eventos de auditoria observados.
 - Visão Geral restaurada com seleção de projeto, filtros de grupo/unidade, oito KPIs, gráfico com alternativa tabular, qualidade dos dados e observações por validação.
+- Mapa Leaflet offline verificado com unidade sintética e hierarquia município/COREDE/região funcional/bioma; latitude `-30.1` e longitude `-53.2` retornaram pela API, enquanto latitude `91` foi rejeitada com HTTP `422`.
 
 ## Sanitização para publicação
 

@@ -27,7 +27,7 @@ Abra `http://127.0.0.1:8088`. O prompt de administrador não ecoa a senha. Para 
 
 ## Funcionalidade atual
 
-Login/logout, sessão server-side e CSRF; dashboard persistido com seletor de projeto, filtros de grupo/unidade, KPIs, percentuais, gráfico e tabela acessível; cadastros de projetos, unidades, atividades, observações e encaminhamentos; auditoria append-only; relatório HTML imprimível; exportações CSV/JSON; backup/restore e verificações. Integrações externas aparecem como `not_integrated`.
+Login/logout, sessão server-side e CSRF; dashboard persistido com seletor de projeto, filtros de grupo/unidade, KPIs, percentuais, gráfico e tabela acessível; mapa Leaflet local das unidades com município, COREDE, região funcional, bioma e coordenadas opcionais; cadastros de projetos, unidades, atividades, observações e encaminhamentos; auditoria append-only; relatório HTML imprimível; exportações CSV/JSON; backup/restore e verificações. Integrações externas aparecem como `not_integrated`.
 
 Dados operacionais e resultados de projetos não fazem parte do repositório público. Crie projetos pela interface/API e mantenha bases SQLite e arquivos privados fora do Git.
 
