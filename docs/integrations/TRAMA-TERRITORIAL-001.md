@@ -1,7 +1,12 @@
 # TRAMA-TERRITORIAL-001: Contrato e Especificação de Integração Territorial
 
 ## 1. Visão Geral
-Especificação do adaptador e do catálogo de referência territorial do Rio Grande do Sul no TRAMA.
+Especificação do adaptador consumidor do serviço TRAMA-RS. O TRAMA não mantém nem gera uma fonte territorial paralela.
+
+- Endpoint padrão: `http://10.163.80.176:8080`
+- Configuração: variável `TRAMA_RS_URL`
+- API consumida: `/v1/municipios`, `/v1/coredes`, `/v1/regioes-funcionais` e `/v1/biomas`
+- Política de falha: indisponibilidade explícita, sem fallback inferido
 
 ## 2. Contrato de Contexto Territorial
 Endpoint local de consulta:
@@ -13,31 +18,31 @@ ou
 ```json
 {
   "municipio": {
-    "codigo_ibge": "4314902",
-    "nome": "Porto Alegre",
+    "codigo_ibge": "4303301",
+    "nome": "Caibaté",
     "uf": "RS"
   },
   "planejamento": {
     "corede": {
-      "codigo": "metropolitano-delta-do-jacui",
-      "nome": "Metropolitano Delta do Jacuí"
+      "codigo": "missoes",
+      "nome": "Missões"
     },
     "regiao_funcional": {
-      "codigo": "rf-1",
-      "nome": "Região Funcional 1"
+      "codigo": "RF7",
+      "nome": "Região Funcional 7"
     }
   },
   "ecologia": {
-    "bioma_predominante": "Pampa",
-    "biomas_ocorrentes": ["Pampa", "Mata Atlântica"],
+    "bioma_predominante": "pampa",
+    "biomas_ocorrentes": ["mata-atlantica", "pampa"],
     "criterio": "predominancia_por_area"
   },
   "referencias": {
-    "planejamento": "SPGG/RS - Atlas Socioeconômico do RS",
-    "ecologia": "IBGE - Biomas do Brasil"
+    "planejamento": "TRAMA-RS PRELIMINAR_NAO_HOMOLOGADO",
+    "ecologia": "TRAMA-RS; classificação ecológica conforme disponibilidade declarada"
   },
-  "dataset_version": "rs-territorial-2026.1",
-  "status": "verified"
+  "dataset_version": "0.1.0",
+  "status": "PRELIMINAR_NAO_HOMOLOGADO"
 }
 ```
 
@@ -50,7 +55,8 @@ Suporta parâmetros de busca e filtros:
 - `biome`: filtro por Bioma.
 
 ## 4. Estrutura de Proveniência e Fallback Offline
-- **Fonte Planejamento**: 28 COREDEs e 9 Regiões Funcionais (Atlas Socioeconômico / SPGG-RS).
-- **Fonte Ecologia**: IBGE Biomas 1:250.000.
-- **Armazenamento**: Tabela local `territorial_catalog` em SQLite com WAL.
-- **Integridade**: Atualizações preservam os registros históricos e garantem operação offline ininterrupta.
+- **Fonte imediata**: TRAMA-RS, incluindo versão, status e proveniência declarados por ele.
+- **Cobertura atual**: catálogo preliminar; somente dois exemplos municipais possuem bioma preenchido e 495 permanecem pendentes.
+- **Armazenamento**: o banco TRAMA guarda dados operacionais das unidades, não uma verdade territorial gerada localmente.
+- **Integridade**: campos desconhecidos permanecem `null`; filtros por bioma incompleto retornam conflito explícito.
+- **Offline**: um snapshot validado ainda não foi implementado. Se o TRAMA-RS estiver indisponível, novas consultas territoriais falham expressamente.

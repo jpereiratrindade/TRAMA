@@ -6,6 +6,7 @@
 #include <openssl/sha.h>
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -13,6 +14,7 @@
 #include <sstream>
 #include <thread>
 #include <unordered_map>
+#include <strings.h>
 #include <unistd.h>
 namespace fs=std::filesystem;
 namespace trama {
@@ -31,8 +33,33 @@ std::string read(const fs::path&p){std::ifstream f(p,std::ios::binary);if(!f)thr
 void bind_opt(St&q,int i,const std::optional<std::string>&v){if(v)q.b(i,*v);else q.bn(i);}
 void bind_number_or_null(St&q,int i,const json&j,const char*key){if(j.contains(key)&&!j[key].is_null()&&j[key]!="")sqlite3_bind_double(q.s,i,j[key].is_number()?j[key].get<double>():std::stod(j[key].get<std::string>()));else q.bn(i);}
 std::string territory(Db&d,const std::string&kind,const std::string&name,const std::optional<std::string>&parent,const std::string&ts,const std::optional<std::string>&code={}){if(name.empty())return parent.value_or("");auto id="territory-"+sha256(kind+"\n"+name+"\n"+parent.value_or("")).substr(0,24);St s(d,"INSERT INTO territories(id,parent_id,kind,code,name,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET parent_id=excluded.parent_id,code=COALESCE(excluded.code,territories.code),name=excluded.name,updated_at=excluded.updated_at");s.b(1,id);bind_opt(s,2,parent);s.b(3,kind);bind_opt(s,4,code);s.b(5,name);s.b(6,ts);s.b(7,ts);s.row();return id;}
-struct TerritoryMatch { std::string ibge_code,municipality_name,uf,corede_code,corede_name,rf_code,rf_name,biome_predominant,biomes_occurring,dataset_version,source_planning,source_ecology,verified_at; };
-std::optional<TerritoryMatch> lookup_catalog(Db&d,const std::string&q){if(q.empty())return{};St s(d,"SELECT ibge_code,municipality_name,uf,corede_code,corede_name,rf_code,rf_name,biome_predominant,biomes_occurring,dataset_version,source_planning,source_ecology,verified_at FROM territorial_catalog WHERE ibge_code=? OR LOWER(municipality_name)=LOWER(?) LIMIT 1");s.b(1,q);s.b(2,q);if(!s.row())return{};return TerritoryMatch{s.str(0),s.str(1),s.str(2),s.str(3),s.str(4),s.str(5),s.str(6),s.str(7),s.str(8),s.str(9),s.str(10),s.str(11),s.str(12)};}
+struct TerritoryMatch { std::string ibge_code,municipality_name,uf,corede_code,corede_name,rf_code,rf_name,biome_predominant,biomes_occurring,dataset_version,source_planning,source_ecology,status; };
+struct RsEndpoint { std::string host{"10.163.80.176"}; int port{8080}; };
+RsEndpoint rs_endpoint(){
+  std::string url=std::getenv("TRAMA_RS_URL")?std::getenv("TRAMA_RS_URL"):"http://10.163.80.176:8080";
+  constexpr std::string_view prefix="http://";
+  if(!url.starts_with(prefix))throw std::runtime_error("TRAMA_RS_URL deve usar http:// nesta versão");
+  auto authority=url.substr(prefix.size());if(auto slash=authority.find('/');slash!=std::string::npos)authority.resize(slash);
+  RsEndpoint out;auto colon=authority.rfind(':');if(colon==std::string::npos)out.host=authority;else{out.host=authority.substr(0,colon);out.port=std::stoi(authority.substr(colon+1));}
+  if(out.host.empty()||out.port<1||out.port>65535)throw std::runtime_error("TRAMA_RS_URL inválida");
+  return out;
+}
+json rs_get(const std::string& path){auto e=rs_endpoint();httplib::Client client(e.host,e.port);client.set_connection_timeout(2,0);client.set_read_timeout(5,0);auto response=client.Get(path);if(!response)throw std::runtime_error("TRAMA-RS indisponível em "+e.host+":"+std::to_string(e.port));if(response->status!=200)throw std::runtime_error("TRAMA-RS respondeu HTTP "+std::to_string(response->status));return json::parse(response->body);}
+std::unordered_map<std::string,std::string> rs_corede_names(){std::unordered_map<std::string,std::string> out;for(auto&x:rs_get("/v1/coredes").at("data"))out[x.at("id")]=x.at("nome");return out;}
+TerritoryMatch rs_match(const json&m,const json&meta,const std::unordered_map<std::string,std::string>&names){
+  auto nullable=[](const json&x,const char*k){return x.contains(k)&&!x[k].is_null()?x[k].get<std::string>():std::string{};};
+  auto rf=nullable(m,"regiao_funcional_id"),corede=nullable(m,"corede_id");json occurring=m.contains("biomas_presentes_ids")?m["biomas_presentes_ids"]:json(nullptr);
+  return{nullable(m,"codigo_ibge"),m.at("nome"),m.value("uf","RS"),corede,names.contains(corede)?names.at(corede):corede,rf,rf.empty()?"":("Região Funcional "+rf.substr(2)),nullable(m,"bioma_predominante_id"),occurring.is_null()?"":occurring.dump(),meta.value("dataset_version","unknown"),"TRAMA-RS "+meta.value("status_validacao","DESCONHECIDO"),"TRAMA-RS; classificação ecológica conforme disponibilidade declarada",meta.value("status_validacao","DESCONHECIDO")};
+}
+std::optional<TerritoryMatch> lookup_catalog(Db&,const std::string&q){
+  if(q.empty())return{};
+  json response;
+  if(q.size()==7&&std::ranges::all_of(q,[](unsigned char c){return std::isdigit(c);}))response=rs_get("/v1/municipios/"+q);
+  else response=rs_get("/v1/municipios?q="+httplib::encode_uri_component(q)+"&limit=500");
+  auto names=rs_corede_names();if(response["data"].is_object())return rs_match(response["data"],response["meta"],names);
+  for(auto&m:response["data"]){auto name=m.value("nome","");if(strcasecmp(name.c_str(),q.c_str())==0)return rs_match(m,response["meta"],names);}return{};
+}
+json legacy_territory(const TerritoryMatch&m){return{{"ibge_code",m.ibge_code.empty()?json(nullptr):json(m.ibge_code)},{"municipality_name",m.municipality_name},{"uf",m.uf},{"corede_code",m.corede_code},{"corede_name",m.corede_name},{"rf_code",m.rf_code},{"rf_name",m.rf_name},{"biome_predominant",m.biome_predominant.empty()?json(nullptr):json(m.biome_predominant)},{"biomes_occurring",m.biomes_occurring.empty()?json(nullptr):json::parse(m.biomes_occurring)},{"dataset_version",m.dataset_version},{"source_planning",m.source_planning},{"source_ecology",m.source_ecology},{"status_validacao",m.status}};}
 std::string territory_chain(Db&d,json&j,const std::string&ts){
   auto lookup_term=j.value("ibge_code","");
   if(lookup_term.empty())lookup_term=j.value("municipality","");
@@ -77,14 +104,14 @@ json territorial_context(const Paths&p,const std::string&ibge_or_name){
   auto match=lookup_catalog(d,ibge_or_name);
   if(!match)return json(nullptr);
   json occurring=json::array();
-  try{occurring=json::parse(match->biomes_occurring);}catch(...){occurring.push_back(match->biome_predominant);}
+  if(!match->biomes_occurring.empty())try{occurring=json::parse(match->biomes_occurring);}catch(...){occurring=nullptr;}else occurring=nullptr;
   return{
-    {"municipio",{{"codigo_ibge",match->ibge_code},{"nome",match->municipality_name},{"uf",match->uf}}},
+    {"municipio",{{"codigo_ibge",match->ibge_code.empty()?json(nullptr):json(match->ibge_code)},{"nome",match->municipality_name},{"uf",match->uf}}},
     {"planejamento",{{"corede",{{"codigo",match->corede_code},{"nome",match->corede_name}}},{"regiao_funcional",{{"codigo",match->rf_code},{"nome",match->rf_name}}}}},
-    {"ecologia",{{"bioma_predominante",match->biome_predominant},{"biomas_ocorrentes",occurring},{"criterio","predominancia_por_area"}}},
+    {"ecologia",{{"bioma_predominante",match->biome_predominant.empty()?json(nullptr):json(match->biome_predominant)},{"biomas_ocorrentes",occurring},{"criterio",match->biome_predominant.empty()?json(nullptr):json("predominancia_por_area")}}},
     {"referencias",{{"planejamento",match->source_planning},{"ecologia",match->source_ecology}}},
     {"dataset_version",match->dataset_version},
-    {"status","verified"}
+    {"status",match->status}
   };
 }
 json overview(const Paths&p,std::optional<std::string>group,std::optional<std::string>unit,std::optional<std::string>project,std::optional<std::string>corede,std::optional<std::string>functional_region,std::optional<std::string>biome){
@@ -145,39 +172,11 @@ int server_main(int argc,char**argv){std::string root=arg(argc,argv,"--data-dir"
  app.Get("/api/v1/project-groups",[p](const httplib::Request&r,httplib::Response&z){Db d(p.db);if(!require(d,r,z))return;respond(z,{{"data",rows(d,"SELECT id,project_id,code,label,external_reference FROM project_groups WHERE project_id=? ORDER BY code",[&](St&s){s.b(1,r.get_param_value("project_id"));})}});});
  app.Get("/api/v1/territories",[p](const httplib::Request&r,httplib::Response&z){Db d(p.db);if(!require(d,r,z))return;respond(z,{{"data",rows(d,"SELECT id,kind,code,name FROM territories ORDER BY name")}});});
  app.Get("/api/v1/territories/catalog",[p](const httplib::Request&r,httplib::Response&z){
-   Db d(p.db);if(!require(d,r,z))return;
-   std::string q="SELECT ibge_code,municipality_name,uf,corede_code,corede_name,rf_code,rf_name,biome_predominant,biomes_occurring,dataset_version,source_planning,source_ecology,verified_at FROM territorial_catalog WHERE 1=1";
-   std::vector<std::string> params;
-   if(r.has_param("q")&&!r.get_param_value("q").empty()){
-     q+=" AND (LOWER(municipality_name) LIKE ? OR ibge_code LIKE ?)";
-     std::string pattern="%"+r.get_param_value("q")+"%";
-     params.push_back(pattern);
-     params.push_back(pattern);
-   }
-   if(r.has_param("corede")&&!r.get_param_value("corede").empty()){
-     q+=" AND (corede_name=? OR corede_code=?)";
-     params.push_back(r.get_param_value("corede"));
-     params.push_back(r.get_param_value("corede"));
-   }
-   if(r.has_param("functional_region")&&!r.get_param_value("functional_region").empty()){
-     q+=" AND (rf_name=? OR rf_code=?)";
-     params.push_back(r.get_param_value("functional_region"));
-     params.push_back(r.get_param_value("functional_region"));
-   }
-   if(r.has_param("biome")&&!r.get_param_value("biome").empty()){
-     q+=" AND (biome_predominant=? OR biomes_occurring LIKE ?)";
-     params.push_back(r.get_param_value("biome"));
-     params.push_back("%"+r.get_param_value("biome")+"%");
-   }
-   q+=" ORDER BY municipality_name LIMIT 500";
-   respond(z,{{"data",rows(d,q,[&](St&s){for(size_t i=0;i<params.size();++i)s.b(i+1,params[i]);})}});
+   Db d(p.db);if(!require(d,r,z))return;if(r.has_param("biome")&&!r.get_param_value("biome").empty())return error(z,409,"dados_bioma_incompletos","O TRAMA-RS ainda não possui cobertura municipal completa de biomas");
+   try{std::string path="/v1/municipios?limit=500";if(r.has_param("q")&&!r.get_param_value("q").empty())path+="&q="+httplib::encode_uri_component(r.get_param_value("q"));if(r.has_param("corede")&&!r.get_param_value("corede").empty())path+="&corede_id="+httplib::encode_uri_component(r.get_param_value("corede"));if(r.has_param("functional_region")&&!r.get_param_value("functional_region").empty())path+="&regiao_funcional_id="+httplib::encode_uri_component(r.get_param_value("functional_region"));auto source=rs_get(path);auto names=rs_corede_names();json data=json::array();for(auto&m:source["data"])data.push_back(legacy_territory(rs_match(m,source["meta"],names)));respond(z,{{"data",data},{"meta",source["meta"]}});}catch(const std::exception&e){error(z,503,"trama_rs_indisponivel",e.what());}
  });
  app.Get("/api/v1/territories/dimensions",[p](const httplib::Request&r,httplib::Response&z){
-   Db d(p.db);if(!require(d,r,z))return;
-   auto coredes=rows(d,"SELECT DISTINCT corede_name name,corede_code code FROM territorial_catalog ORDER BY corede_name");
-   auto rfs=rows(d,"SELECT DISTINCT rf_name name,rf_code code FROM territorial_catalog ORDER BY rf_name");
-   auto biomes=rows(d,"SELECT DISTINCT biome_predominant name FROM territorial_catalog ORDER BY biome_predominant");
-   respond(z,{{"data",{{"coredes",coredes},{"functional_regions",rfs},{"biomes",biomes}}}});
+   Db d(p.db);if(!require(d,r,z))return;try{auto cs=rs_get("/v1/coredes"),rs=rs_get("/v1/regioes-funcionais"),bs=rs_get("/v1/biomas");json coredes=json::array(),rfs=json::array(),biomes=json::array();for(auto&x:cs["data"])coredes.push_back({{"name",x["nome"]},{"code",x["id"]}});for(auto&x:rs["data"])rfs.push_back({{"name","Região Funcional "+std::to_string(x["numero"].get<int>())},{"code",x["id"]}});for(auto&x:bs["data"])biomes.push_back({{"name",x["nome"]},{"code",x["id"]},{"available",false}});respond(z,{{"data",{{"coredes",coredes},{"functional_regions",rfs},{"biomes",biomes}}},{"meta",{{"source","TRAMA-RS"},{"status_validacao",cs["meta"]["status_validacao"]},{"biome_filters_available",false}}}});}catch(const std::exception&e){error(z,503,"trama_rs_indisponivel",e.what());}
  });
  app.Get(R"(/api/v1/territories/context/([0-9]{7}))",[p](const httplib::Request&r,httplib::Response&z){
    Db d(p.db);if(!require(d,r,z))return;
@@ -330,7 +329,7 @@ int server_main(int argc,char**argv){std::string root=arg(argc,argv,"--data-dir"
  app.Get("/api/v1/exports/attendance.csv",[p](const httplib::Request&r,httplib::Response&z){Db d(p.db);if(!require(d,r,z))return;auto data=rows(d,"SELECT group_code,unit_name,municipality,total,women,men,youth,source_locator FROM v_attendance WHERE project_id=? ORDER BY unit_name",[&](St&s){s.b(1,r.get_param_value("project_id"));});auto cell=[](std::string v){if(!v.empty()&&std::string("=+-@").find(v[0])!=std::string::npos)v="'"+v;size_t pos=0;while((pos=v.find('"',pos))!=std::string::npos){v.insert(pos,"\"");pos+=2;}return "\""+v+"\"";};std::string csv="\xEF\xBB\xBFgrupo,uac,municipio,total,mulheres,homens,jovens,fonte\r\n";for(auto&x:data)csv+=cell(x["group_code"])+","+cell(x["unit_name"])+","+cell(x["municipality"])+","+std::to_string((int)x["total"])+","+std::to_string((int)x["women"])+","+std::to_string((int)x["men"])+","+std::to_string((int)x["youth"])+","+cell(x["source_locator"])+"\r\n";z.set_header("Content-Disposition","attachment; filename=trama-participacoes.csv");z.set_content(csv,"text/csv; charset=utf-8");headers(z);});
  app.Post("/api/v1/reports/preview",[p](const httplib::Request&r,httplib::Response&z){try{Db d(p.db);auto u=require(d,r,z,true);if(!u)return;auto j=json::parse(r.body); std::string pid=j.value("project_id","");auto data=rows(d,"SELECT group_code,unit_name,municipality,total,women,men,youth FROM v_attendance WHERE project_id=? ORDER BY group_code,unit_name",[&](St&s){s.b(1,pid);});auto ov=overview(p,{},{},pid);std::string id="report-"+random_hex(12),html="<!doctype html><html lang=pt-BR><meta charset=utf-8><title>Relatório TRAMA</title><style>body{font:16px system-ui;max-width:1000px;margin:auto;padding:2rem}table{border-collapse:collapse;width:100%}th,td{padding:.5rem;border:1px solid #bbb;text-align:left}@media print{button{display:none}}</style><button onclick=print()>Imprimir / salvar como PDF</button><h1>Relatório técnico TRAMA</h1><p>Gerado em "+now()+" · regra attendance-v1</p><h2>Sumário</h2><p>Participações informadas: "+std::to_string((int)ov["kpis"]["reported_attendances"])+"; mulheres: "+std::to_string((int)ov["kpis"]["reported_women"])+"; homens: "+std::to_string((int)ov["kpis"]["reported_men"])+"; jovens: "+std::to_string((int)ov["kpis"]["reported_youth"])+".</p><table><thead><tr><th>Grupo<th>UAC<th>Município<th>Total<th>Mulheres<th>Homens<th>Jovens</tr></thead><tbody>";for(auto&x:data)html+="<tr><td>"+esc(x["group_code"])+"<td>"+esc(x["unit_name"])+"<td>"+esc(x["municipality"])+"<td>"+std::to_string((int)x["total"])+"<td>"+std::to_string((int)x["women"])+"<td>"+std::to_string((int)x["men"])+"<td>"+std::to_string((int)x["youth"]);html+="</tbody></table><h2>Fonte e ressalvas</h2><p>Consulte as fontes vinculadas aos registros. Participações podem não equivaler a pessoas únicas. Categorias sobrepostas não devem ser somadas ao total. Este relatório não demonstra impacto sem medições adequadas.</p></html>";St s(d,"INSERT INTO report_runs VALUES(?,?,?,?,?,?,?,?)");s.b(1,id);s.b(2,pid);s.b(3,"technical_html");s.b(4,j.dump());s.b(5,now());s.b(6,u->id);s.b(7,now());s.b(8,"attendance-v1");s.row();z.set_header("X-Report-Id",id);z.set_content(html,"text/html; charset=utf-8");headers(z);}catch(const std::exception&e){error(z,422,"report_error",e.what());}});
  app.Get("/api/v1/admin/audit",[p](const httplib::Request&r,httplib::Response&z){Db d(p.db);if(!require(d,r,z,false,true))return;respond(z,{{"data",rows(d,"SELECT id,actor_id,project_id,entity_type,entity_id,action,event_at,event_hash FROM audit_events ORDER BY event_at DESC LIMIT 200")}});});
- app.Get("/api/v1/admin/integrations",[p](const httplib::Request&r,httplib::Response&z){Db d(p.db);if(!require(d,r,z,false,true))return;json a=json::array();for(auto name:{"ENTE","Morfocampo","SYNTH","JEV","SisterSTRATA","ELO","SisTer-Nexo"})a.push_back({{"id",slug(name)},{"name",name},{"status","not_integrated"},{"health","not_configured"}});respond(z,{{"data",a}});});
+ app.Get("/api/v1/admin/integrations",[p](const httplib::Request&r,httplib::Response&z){Db d(p.db);if(!require(d,r,z,false,true))return;json a=json::array();try{auto health=rs_get("/v1/health");a.push_back({{"id","trama-rs"},{"name","TRAMA-RS"},{"status","integrated"},{"health",health["data"]["healthy"]},{"endpoint","http://10.163.80.176:8080"},{"validation_status",health["data"]["status"]}});}catch(const std::exception&e){a.push_back({{"id","trama-rs"},{"name","TRAMA-RS"},{"status","unavailable"},{"health",false},{"error",e.what()}});}for(auto name:{"ENTE","Morfocampo","SYNTH","JEV","SisterSTRATA","ELO","SisTer-Nexo"})a.push_back({{"id",slug(name)},{"name",name},{"status","not_integrated"},{"health","not_configured"}});respond(z,{{"data",a}});});
  app.Get(R"(/(.*))",[p](const httplib::Request&r,httplib::Response&z){auto rel=r.matches[1].str();if(rel.empty())rel="index.html";if(rel.find("..")!=std::string::npos)return error(z,400,"invalid_path","Caminho inválido");auto file=p.web/rel;if(!fs::exists(file)||!fs::is_regular_file(file))file=p.web/"index.html";auto ext=file.extension().string();std::string mime=ext==".js"?"text/javascript":ext==".css"?"text/css":"text/html";z.set_content(read(file),mime+"; charset=utf-8");headers(z);if(ext==".js"||ext==".css")z.set_header("Cache-Control","public, max-age=3600");else z.set_header("Cache-Control","no-store");});
  std::cout<<"TRAMA 0.1.0 em http://"<<host<<":"<<port<<"\n";if(!app.listen(host,port))throw std::runtime_error("não foi possível abrir host/porta");return 0;}
 }

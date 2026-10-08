@@ -58,7 +58,7 @@ async function layout(user: J) {
     project = ps.data[0].id;
     projectName = ps.data[0].name;
   }
-  app.innerHTML = `<div class="shell"><aside><div class="brand">TRAMA</div><nav>${nav.map((x, i) => `<button data-page="${x[0]}" ${i ? '' : 'class="active"'}>${x[1]}</button>`).join('')}</nav><footer>${h(user.login)}<button id="logout">Sair</button></footer></aside><main><header><button id="menu">☰</button><div><strong id="title">Visão Geral</strong><small id="project-name">${h(projectName)}</small></div><span class="badge verified">Territórios RS · Offline Ready</span></header><div id="content"></div></main></div>`;
+  app.innerHTML = `<div class="shell"><aside><div class="brand">TRAMA</div><nav>${nav.map((x, i) => `<button data-page="${x[0]}" ${i ? '' : 'class="active"'}>${x[1]}</button>`).join('')}</nav><footer>${h(user.login)}<button id="logout">Sair</button></footer></aside><main><header><button id="menu">☰</button><div><strong id="title">Visão Geral</strong><small id="project-name">${h(projectName)}</small></div><span class="badge">TRAMA-RS · catálogo preliminar</span></header><div id="content"></div></main></div>`;
   
   document.querySelectorAll('[data-page]').forEach(b => (b as HTMLButtonElement).onclick = () => show((b as HTMLElement).dataset.page!));
   document.querySelector('#menu')!.addEventListener('click', () => document.querySelector('aside')!.classList.toggle('open'));
@@ -295,7 +295,7 @@ async function units() {
     <section class="panel" id="form"></section>
     <section class="panel">
       <h2>Mapa territorial das unidades</h2>
-      <p class="muted">Mapa Leaflet com base offline. As coordenadas e recortes territoriais (Município, COREDE, RF e Biomas) são referenciados de forma autoritativa.</p>
+      <p class="muted">Mapa Leaflet com base offline. Município, COREDE, RF e biomas mantêm a versão, proveniência e cobertura declaradas pelo TRAMA-RS.</p>
       <div id="unit-map" aria-label="Mapa das unidades"></div>
       ${located.length ? '' : '<p>Nenhuma unidade possui coordenadas informadas.</p>'}
     </section>
@@ -341,11 +341,11 @@ async function units() {
     document.querySelector('#form')!.innerHTML = `
       <h2>${x.id ? 'Editar' : 'Nova'} unidade</h2>
       <div class="provenance-box" id="prov-box" style="${x.ibge_code ? '' : 'display:none;'}">
-        <b>Referência Territorial RS:</b> Município validado no catálogo local com preenchimento automático das dimensões administrativa (COREDE / RF) e ecológica (Biomas).
+        <b>Referência Territorial RS:</b> dados consultados no TRAMA-RS. Campos ainda não homologados ou desconhecidos permanecem vazios.
       </div>
       <form id="unit-form">
         <datalist id="muni-list">
-          ${catalog.map((m: J) => `<option value="${h(m.municipality_name)}">${h(m.ibge_code)} - ${h(m.corede_name)} (${h(m.rf_name)})</option>`).join('')}
+          ${catalog.map((m: J) => `<option value="${h(m.municipality_name)}">${h(m.ibge_code || 'código pendente')} - ${h(m.corede_name)} (${h(m.rf_name)})</option>`).join('')}
         </datalist>
         <div class="form-grid">
           <label>Código da Unidade<input name="code" value="${h(x.code || '')}" required></label>
@@ -381,22 +381,22 @@ async function units() {
       if (!query) return;
       const found = catalog.find((c: J) => c.municipality_name.toLowerCase() === query.toLowerCase() || c.ibge_code === query);
       if (found) {
-        (document.querySelector('#ibge-input') as HTMLInputElement).value = found.ibge_code;
+        (document.querySelector('#ibge-input') as HTMLInputElement).value = found.ibge_code || '';
         (document.querySelector('#corede-input') as HTMLInputElement).value = found.corede_name;
         (document.querySelector('#rf-input') as HTMLInputElement).value = found.rf_name;
-        (document.querySelector('#biome-input') as HTMLInputElement).value = found.biome_predominant;
-        (document.querySelector('#occ-input') as HTMLInputElement).value = typeof found.biomes_occurring === 'string' ? found.biomes_occurring : JSON.stringify(found.biomes_occurring);
+        (document.querySelector('#biome-input') as HTMLInputElement).value = found.biome_predominant || '';
+        (document.querySelector('#occ-input') as HTMLInputElement).value = found.biomes_occurring == null ? '' : (typeof found.biomes_occurring === 'string' ? found.biomes_occurring : JSON.stringify(found.biomes_occurring));
         document.querySelector('#prov-box')!.removeAttribute('style');
       } else {
         try {
           const res = await api(`/api/v1/territories/lookup?q=${encodeURIComponent(query)}`);
           if (res.data) {
             const d = res.data;
-            (document.querySelector('#ibge-input') as HTMLInputElement).value = d.municipio.codigo_ibge;
+            (document.querySelector('#ibge-input') as HTMLInputElement).value = d.municipio.codigo_ibge || '';
             (document.querySelector('#corede-input') as HTMLInputElement).value = d.planejamento.corede.nome;
             (document.querySelector('#rf-input') as HTMLInputElement).value = d.planejamento.regiao_funcional.nome;
-            (document.querySelector('#biome-input') as HTMLInputElement).value = d.ecologia.bioma_predominante;
-            (document.querySelector('#occ-input') as HTMLInputElement).value = JSON.stringify(d.ecologia.biomas_ocorrentes);
+            (document.querySelector('#biome-input') as HTMLInputElement).value = d.ecologia.bioma_predominante || '';
+            (document.querySelector('#occ-input') as HTMLInputElement).value = d.ecologia.biomas_ocorrentes == null ? '' : JSON.stringify(d.ecologia.biomas_ocorrentes);
             document.querySelector('#prov-box')!.removeAttribute('style');
           }
         } catch (_) {}
@@ -523,8 +523,8 @@ async function admin() {
       <h2>Serviço Territorial RS (Integração de Referência)</h2>
       <article class="record">
         <b>Serviço Territorial RS (C++26 Adaptador Local) <span class="badge verified">Ativo / Offline Ready</span></b>
-        <span><b>Catálogo Local:</b> 497 municípios do RS, 28 COREDEs, 9 Regiões Funcionais</span>
-        <span><b>Fontes de Referência:</b> SPGG/RS (Atlas Socioeconômico) e IBGE (Biomas 1:250.000)</span>
+        <span><b>Catálogo Territorial:</b> fornecido pelo TRAMA-RS, com cobertura e estado de validação explícitos</span>
+        <span><b>Endpoint padrão:</b> http://10.163.80.176:8080</span>
         <span><b>Status de Operação:</b> Sincronizado e validado localmente</span>
       </article>
     </section>

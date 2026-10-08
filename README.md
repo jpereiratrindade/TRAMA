@@ -12,7 +12,8 @@ Requisitos testados: Fedora, GCC 16.2, CMake 4.3, Ninja 1.13, SQLite 3.51, OpenS
 ./scripts/build.sh
 ./build/bin/trama init --data-dir ./var
 ./build/bin/trama setup-admin --data-dir ./var --login admin
-./build/bin/trama-server --data-dir ./var --host 127.0.0.1 --port 8088
+TRAMA_RS_URL=http://10.163.80.176:8080 \
+  ./build/bin/trama-server --data-dir ./var --host 127.0.0.1 --port 8088
 ```
 
 Abra `http://127.0.0.1:8088`. O prompt de administrador não ecoa a senha. Para testes e operação:
@@ -27,8 +28,10 @@ Abra `http://127.0.0.1:8088`. O prompt de administrador não ecoa a senha. Para 
 
 ## Funcionalidade atual
 
-Login/logout, sessão server-side e CSRF; dashboard persistido com seletor de projeto, filtros de grupo/unidade, KPIs, percentuais, gráfico e tabela acessível; mapa Leaflet local das unidades com município, COREDE, região funcional, bioma e coordenadas opcionais; cadastros de projetos, unidades, atividades, observações e encaminhamentos; auditoria append-only; relatório HTML imprimível; exportações CSV/JSON; backup/restore e verificações. Integrações externas aparecem como `not_integrated`.
+Login/logout, sessão server-side e CSRF; dashboard persistido com seletor de projeto, filtros de grupo/unidade, KPIs, percentuais, gráfico e tabela acessível; mapa Leaflet local das unidades com município, COREDE, região funcional, bioma e coordenadas opcionais; cadastros de projetos, unidades, atividades, observações e encaminhamentos; auditoria append-only; relatório HTML imprimível; exportações CSV/JSON; backup/restore e verificações.
+
+O catálogo territorial é consumido exclusivamente do **TRAMA-RS**. O endpoint padrão é `http://10.163.80.176:8080` e pode ser substituído com `TRAMA_RS_URL`. O TRAMA preserva o status de validação, a versão e campos `null` recebidos; não usa fallback inferido. No catálogo preliminar atual, filtros de bioma permanecem indisponíveis e retornam conflito explícito.
 
 Dados operacionais e resultados de projetos não fazem parte do repositório público. Crie projetos pela interface/API e mantenha bases SQLite e arquivos privados fora do Git.
 
-Limitações conhecidas: upload/download de evidências, gestão completa de usuários/papéis, PATCH de atividade/observação e suíte Playwright ainda não estão integrados. HTTPS LAN requer implementação/configuração adicional; por segurança, HTTP recusa bind não-loopback. PDF usa impressão do navegador. O PDF-fonte não está no repositório e seu hash permanece nulo. Nenhuma licença foi assumida.
+Limitações conhecidas: o TRAMA-RS precisa estar acessível durante pesquisas e novos cadastros territoriais; cache offline validado ainda não foi implementado. Upload/download de evidências, gestão completa de usuários/papéis e suíte Playwright ainda não estão integrados. HTTPS LAN requer implementação/configuração adicional; por segurança, o servidor TRAMA recusa bind não-loopback. PDF usa impressão do navegador.
