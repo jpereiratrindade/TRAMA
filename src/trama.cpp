@@ -90,7 +90,7 @@ void migrate(Db&d,const Paths&p){d.exec("CREATE TABLE IF NOT EXISTS schema_migra
 json rows(Db&d,const std::string&q,const std::function<void(St&)>&bind={}){St s(d,q);if(bind)bind(s);json a=json::array();int n=sqlite3_column_count(s.s);while(s.row()){json x;for(int i=0;i<n;i++){auto k=sqlite3_column_name(s.s,i);if(s.null(i))x[k]=nullptr;else if(sqlite3_column_type(s.s,i)==SQLITE_INTEGER)x[k]=s.num(i);else x[k]=s.str(i);}a.push_back(x);}return a;}
 struct User {std::string id,login,role,csrf;};
 std::optional<User> auth(Db&d,const httplib::Request&r){auto c=r.get_header_value("Cookie");auto pos=c.find("trama_session=");if(pos==std::string::npos)return{};auto token=c.substr(pos+14);if(auto e=token.find(';');e!=std::string::npos)token.resize(e);St s(d,"SELECT u.id,u.login,u.system_role,se.csrf_hash FROM sessions se JOIN users u ON u.id=se.user_id WHERE se.secret_hash=? AND se.revoked_at IS NULL AND se.expires_at>strftime('%Y-%m-%dT%H:%M:%SZ','now') AND u.active=1");s.b(1,sha256(token));if(!s.row())return{};return User{s.str(0),s.str(1),s.str(2),s.str(3)};}
-void headers(httplib::Response&r){r.set_header("X-Content-Type-Options","nosniff");r.set_header("X-Frame-Options","SAMEORIGIN");r.set_header("Referrer-Policy","no-referrer");r.set_header("Content-Security-Policy","default-src 'self' 'unsafe-inline' https://unpkg.com https://*.tile.openstreetmap.org; style-src 'self' 'unsafe-inline' https://unpkg.com; script-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: https: blob:; frame-ancestors 'self'");}
+void headers(httplib::Response&r){r.set_header("X-Content-Type-Options","nosniff");r.set_header("X-Frame-Options","SAMEORIGIN");r.set_header("Referrer-Policy","no-referrer");r.set_header("Content-Security-Policy","default-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; script-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: https: blob:; frame-ancestors 'self'");}
 void respond(httplib::Response&r,const json&j,int status=200){r.status=status;r.set_content(j.dump(),"application/json; charset=utf-8");headers(r);}
 void error(httplib::Response&r,int status,const std::string&code,const std::string&msg){respond(r,{{"error",{{"code",code},{"message",msg},{"details",json::object()}}},{"request_id",random_hex(8)}},status);}
 bool csrf(const httplib::Request&r,const User&u){return sha256(r.get_header_value("X-CSRF-Token"))==u.csrf;}
@@ -442,7 +442,7 @@ int server_main(int argc,char**argv){std::string root=arg(argc,argv,"--data-dir"
       html+=".tag-blue{background:#e0f2fe;color:#0369a1}";
       html+=".tag-amber{background:#fef3c7;color:#92400e}";
       html+=".map-box{background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:1rem;margin-top:1rem}";
-      html+="#report-map{height:400px;width:100%;border-radius:6px;border:1px solid #cbd5e1;background:#e8eee9}";
+      html+="#report-map{height:400px;width:100%;border-radius:6px;border:1px solid #cbd5e1;background-color:#eef4f1;background-image:linear-gradient(rgba(14,80,62,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(14,80,62,.05) 1px,transparent 1px);background-size:32px 32px}";
       html+=".provenance-box{background:#f8fafc;border-left:4px solid #0284c7;border-radius:0 8px 8px 0;padding:1rem 1.25rem;margin-top:2rem;font-size:0.85rem;color:#475569}";
       html+=".actions{display:flex;gap:0.75rem;margin-bottom:1.5rem}";
       html+="button.btn{background:#0e503e;color:#fff;border:none;padding:0.6rem 1.2rem;border-radius:6px;font-weight:600;cursor:pointer;font-size:0.9rem;display:inline-flex;align-items:center;gap:0.4rem}";
@@ -598,7 +598,6 @@ int server_main(int argc,char**argv){std::string root=arg(argc,argv,"--data-dir"
         html+="  if (typeof L !== 'undefined') {";
         html+="    try {";
         html+="      var map = L.map('report-map', { attributionControl: false }).setView([-30.0, -53.0], 6);";
-        html+="      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);";
         html+="      var markers = [];";
         html+="      units.forEach(function(u) {";
         html+="        if (typeof u.latitude === 'number' && typeof u.longitude === 'number') {";
@@ -639,6 +638,7 @@ int server_main(int argc,char**argv){std::string root=arg(argc,argv,"--data-dir"
         html+="            }";
         html+="          }).addTo(map);";
         html+="          thematic.bringToBack();";
+        html+="          if (markers.length === 0 && thematic.getBounds().isValid()) map.fitBounds(thematic.getBounds(), { padding: [12, 12] });";
         html+="        }).catch(function() {});";
         html+="      }";
         html+="    } catch(e) { console.error('Map init error:', e); }";
