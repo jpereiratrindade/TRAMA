@@ -63,10 +63,13 @@ async function layout(user: J) {
     project = ps.data[0].id;
     projectName = ps.data[0].name;
   }
-  app.innerHTML = `<div class="shell"><aside><div class="sidebar-brand">${brand()}<span>Relatos do campo</span></div><nav>${nav.map((x, i) => `<button data-page="${x[0]}" ${i ? '' : 'class="active"'}><i aria-hidden="true"></i>${x[1]}</button>`).join('')}</nav><div class="sidebar-note"><small>Atuação territorial</small><strong>Agricultura e pecuária familiar</strong><span>Registros construídos junto à FETAG</span></div><footer><span class="user-dot"></span>${h(user.login)}<button id="logout">Sair</button></footer></aside><main><header><button id="menu" aria-label="Abrir menu">☰</button><div><strong id="title">Visão Geral</strong><small id="project-name">${h(projectName)}</small></div><span class="badge"><i></i> Território RS conectado</span></header><div id="content"></div></main></div>`;
+  app.innerHTML = `<a class="skip-link" href="#content">Ir para o conteúdo</a><div class="shell"><aside id="sidebar"><div class="sidebar-brand">${brand()}<span>Relatos do campo</span></div><nav aria-label="Navegação principal">${nav.map((x, i) => `<button data-page="${x[0]}" ${i ? '' : 'class="active" aria-current="page"'}><i aria-hidden="true"></i>${x[1]}</button>`).join('')}</nav><div class="sidebar-note"><small>Atuação territorial</small><strong>Agricultura e pecuária familiar</strong><span>Registros construídos junto à FETAG</span></div><footer><span class="user-dot" aria-hidden="true"></span>${h(user.login)}<button id="logout">Sair</button></footer></aside><main><header><button id="menu" aria-label="Abrir menu" aria-controls="sidebar" aria-expanded="false">☰</button><div><strong id="title">Visão Geral</strong><small id="project-name">${h(projectName)}</small></div><span class="badge"><i></i> Território RS conectado</span></header><div id="content" tabindex="-1"></div></main></div>`;
   
   document.querySelectorAll('[data-page]').forEach(b => (b as HTMLButtonElement).onclick = () => show((b as HTMLElement).dataset.page!));
-  document.querySelector('#menu')!.addEventListener('click', () => document.querySelector('aside')!.classList.toggle('open'));
+  document.querySelector('#menu')!.addEventListener('click', (event) => {
+    const open = document.querySelector('aside')!.classList.toggle('open');
+    (event.currentTarget as HTMLButtonElement).setAttribute('aria-expanded', String(open));
+  });
   document.querySelector('#logout')!.addEventListener('click', async () => {
     await api('/api/v1/auth/logout', { method: 'POST', body: '{}' });
     csrf = '';
@@ -96,7 +99,11 @@ async function remove(path: string, back: string) {
 }
 
 async function show(page: string) {
-  document.querySelectorAll('[data-page]').forEach(b => b.classList.toggle('active', (b as HTMLElement).dataset.page === page));
+  document.querySelectorAll('[data-page]').forEach(b => {
+    const active = (b as HTMLElement).dataset.page === page;
+    b.classList.toggle('active', active);
+    if (active) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  });
   view(nav.find(x => x[0] === page)?.[1] || page, '<p class="loading">Carregando…</p>');
   try {
     if (page === 'projects') await projects();
@@ -160,7 +167,7 @@ async function dashboard() {
       <div><p class="eyebrow">Trabalho de base · FETAG</p><h1>O campo contado por quem vive nele.</h1><p>Acompanhe atividades, participação e encaminhamentos da agricultura e da pecuária familiar nos territórios.</p></div>
       <div class="welcome-mark" aria-hidden="true">${tramaMark}</div>
     </section>
-    <section class="filters">
+    <section class="filters dashboard-filters" aria-label="Filtros da visão geral">
       <label>Projeto
         <select id="dash-project">${projectsRes.data.map((x: J) => `<option value="${h(x.id)}" ${x.id === project ? 'selected' : ''}>${h(x.name)}</option>`).join('')}</select>
       </label>
@@ -508,7 +515,7 @@ async function reports() {
   const biomes: any[] = dimsRes.data?.biomes || [];
 
   view('Relatórios Técnicos', `
-    <section class="filters">
+    <section class="filters report-filters" aria-label="Filtros do relatório">
       <label>Projeto
         <select id="report-project">${projectsRes.data.map((x: J) => `<option value="${h(x.id)}" ${x.id === project ? 'selected' : ''}>${h(x.name)}</option>`).join('')}</select>
       </label>
