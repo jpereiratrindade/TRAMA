@@ -7,6 +7,12 @@ type J = Record<string, any>;
 let csrf = '', project = '', projectName = 'Nenhum projeto selecionado';
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
+const tramaMark = `<svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.8"><path d="M32 5 55 18v28L32 59 9 46V18z"/><path d="M32 5v54M9 18l46 28M55 18 9 46"/></g><g fill="currentColor"><circle cx="32" cy="5" r="4"/><circle cx="55" cy="18" r="4"/><circle cx="55" cy="46" r="4"/><circle cx="32" cy="59" r="4"/><circle cx="9" cy="46" r="4"/><circle cx="9" cy="18" r="4"/><circle cx="32" cy="32" r="5"/></g></svg>`;
+
+function brand() {
+  return `<div class="brand">${tramaMark}<span class="brand-text"><small>Ecossistema SisTer</small><strong>TRAMA</strong></span></div>`;
+}
+
 async function api(path: string, init: RequestInit = {}) {
   const h = new Headers(init.headers);
   h.set('Content-Type', 'application/json');
@@ -24,7 +30,7 @@ async function api(path: string, init: RequestInit = {}) {
 }
 
 function login() {
-  app.innerHTML = `<main class="login"><section><div class="brand">TRAMA</div><p>Territórios, Registros, Atividades, Monitoramento e Análise</p><form id="login"><label>Usuário<input name="login" autocomplete="username" required></label><label>Senha<input name="password" type="password" autocomplete="current-password" required></label><button>Entrar</button><p class="error" role="alert"></p></form><small>Sempre pronto. Sempre incompleto.</small></section></main>`;
+  app.innerHTML = `<main class="login"><section class="login-story"><div>${brand()}<p class="eyebrow">Conhecimento que nasce no território</p><h1>Relatos que fortalecem a agricultura e a pecuária familiar.</h1><p>Registre atividades, preserve as vozes das comunidades e acompanhe os encaminhamentos construídos junto à FETAG.</p></div><div class="field-lines" aria-hidden="true"><i></i><i></i><i></i><i></i></div></section><section class="login-card"><span class="login-kicker">Acesso ao sistema</span><h2>Boas-vindas</h2><p>Entre para continuar o trabalho de campo.</p><form id="login"><label>Usuário<input name="login" autocomplete="username" required></label><label>Senha<input name="password" type="password" autocomplete="current-password" required></label><button>Entrar</button><p class="error" role="alert"></p></form><small>Sempre pronto. Sempre incompleto.</small></section></main>`;
   (document.querySelector('#login') as HTMLFormElement).onsubmit = async (e) => {
     e.preventDefault();
     try {
@@ -48,8 +54,7 @@ const nav = [
   ['observations', 'Observações'],
   ['actions', 'Encaminhamentos'],
   ['reports', 'Relatórios'],
-  ['sources', 'Fontes e Qualidade'],
-  ['admin', 'Administração']
+  ['sources', 'Fontes e Qualidade']
 ];
 
 async function layout(user: J) {
@@ -58,7 +63,7 @@ async function layout(user: J) {
     project = ps.data[0].id;
     projectName = ps.data[0].name;
   }
-  app.innerHTML = `<div class="shell"><aside><div class="brand">TRAMA</div><nav>${nav.map((x, i) => `<button data-page="${x[0]}" ${i ? '' : 'class="active"'}>${x[1]}</button>`).join('')}</nav><footer>${h(user.login)}<button id="logout">Sair</button></footer></aside><main><header><button id="menu">☰</button><div><strong id="title">Visão Geral</strong><small id="project-name">${h(projectName)}</small></div><span class="badge">TRAMA-RS · catálogo preliminar</span></header><div id="content"></div></main></div>`;
+  app.innerHTML = `<div class="shell"><aside><div class="sidebar-brand">${brand()}<span>Relatos do campo</span></div><nav>${nav.map((x, i) => `<button data-page="${x[0]}" ${i ? '' : 'class="active"'}><i aria-hidden="true"></i>${x[1]}</button>`).join('')}</nav><div class="sidebar-note"><small>Atuação territorial</small><strong>Agricultura e pecuária familiar</strong><span>Registros construídos junto à FETAG</span></div><footer><span class="user-dot"></span>${h(user.login)}<button id="logout">Sair</button></footer></aside><main><header><button id="menu" aria-label="Abrir menu">☰</button><div><strong id="title">Visão Geral</strong><small id="project-name">${h(projectName)}</small></div><span class="badge"><i></i> Território RS conectado</span></header><div id="content"></div></main></div>`;
   
   document.querySelectorAll('[data-page]').forEach(b => (b as HTMLButtonElement).onclick = () => show((b as HTMLElement).dataset.page!));
   document.querySelector('#menu')!.addEventListener('click', () => document.querySelector('aside')!.classList.toggle('open'));
@@ -103,7 +108,7 @@ async function show(page: string) {
     else if (page === 'actions') await records('action-items');
     else if (page === 'reports') reports();
     else if (page === 'sources') await sources();
-    else await admin();
+    else view('Página não encontrada', '<div class="notice">Esta área não está disponível.</div>');
   } catch (e) {
     view('Erro', `<div class="notice error">${(e as Error).message}</div>`);
   }
@@ -151,6 +156,10 @@ async function dashboard() {
   const biomes: any[] = dimsRes.data?.biomes || [];
 
   view('Visão Geral', `
+    <section class="welcome">
+      <div><p class="eyebrow">Trabalho de base · FETAG</p><h1>O campo contado por quem vive nele.</h1><p>Acompanhe atividades, participação e encaminhamentos da agricultura e da pecuária familiar nos territórios.</p></div>
+      <div class="welcome-mark" aria-hidden="true">${tramaMark}</div>
+    </section>
     <section class="filters">
       <label>Projeto
         <select id="dash-project">${projectsRes.data.map((x: J) => `<option value="${h(x.id)}" ${x.id === project ? 'selected' : ''}>${h(x.name)}</option>`).join('')}</select>
@@ -194,7 +203,7 @@ async function dashboard() {
 
     document.querySelector('#dash')!.innerHTML = `
       <div class="provenance-box">
-        <b>Dimensões Territoriais Integradas:</b> Planejamento administrativo (Região Funcional → COREDE → Município) e ecologia (Bioma Predominante e Ocorrentes).
+        <b>Dimensões territoriais integradas:</b> Região Funcional, COREDE, Município e contexto ecológico (Bioma Predominante e Ocorrentes).
       </div>
       <section class="cards">
         ${[
@@ -486,24 +495,66 @@ async function reports() {
     view('Relatórios', `<div class="notice">Selecione ou crie um projeto para gerar relatórios.</div>`);
     return;
   }
-  const reportUrl = `/api/v1/reports/preview?project_id=${encodeURIComponent(project)}`;
-  view('Relatórios', `
+
+  const [projectsRes, groupsRes, unitsRes, dimsRes] = await Promise.all([
+    api('/api/v1/projects'),
+    api(`/api/v1/project-groups?project_id=${project}`),
+    api(`/api/v1/units?project_id=${project}`),
+    api(`/api/v1/analytics/dimensions?project_id=${project}`)
+  ]);
+
+  const coredes: any[] = dimsRes.data?.coredes || [];
+  const rfs: any[] = dimsRes.data?.functional_regions || [];
+  const biomes: any[] = dimsRes.data?.biomes || [];
+
+  view('Relatórios Técnicos', `
+    <section class="filters">
+      <label>Projeto
+        <select id="report-project">${projectsRes.data.map((x: J) => `<option value="${h(x.id)}" ${x.id === project ? 'selected' : ''}>${h(x.name)}</option>`).join('')}</select>
+      </label>
+      <label>Grupo
+        <select id="report-group"><option value="">Todos os Grupos</option>${groupsRes.data.map((x: J) => `<option value="${h(x.id)}">${h(x.label)}</option>`).join('')}</select>
+      </label>
+      <label>Unidade (UAC)
+        <select id="report-unit"><option value="">Todas as Unidades</option>${unitsRes.data.map((x: J) => `<option value="${h(x.id)}">${h(x.name)}</option>`).join('')}</select>
+      </label>
+      <label>COREDE
+        <select id="report-corede"><option value="">Todos os 28 COREDEs</option>${coredes.map((x: J) => `<option value="${h(x.name)}">${h(x.name)}</option>`).join('')}</select>
+      </label>
+      <label>Região Funcional
+        <select id="report-rf"><option value="">Todas as 9 RFs</option>${rfs.map((x: J) => `<option value="${h(x.name)}">${h(x.name)}</option>`).join('')}</select>
+      </label>
+      <label>Bioma
+        <select id="report-biome"><option value="">Todos os Biomas</option>${biomes.map((x: J) => `<option value="${h(x.name)}">${h(x.name)}</option>`).join('')}</select>
+      </label>
+      <label>Incluir Mapa
+        <select id="report-inc-map"><option value="1">Sim (com Mapa)</option><option value="0">Não (apenas Tabelas)</option></select>
+      </label>
+      <label>Camada do Mapa
+        <select id="report-map-layer"><option value="municipios">Municípios</option><option value="coredes">COREDEs</option><option value="regioes-funcionais">Regiões Funcionais</option><option value="biomas">Biomas</option></select>
+      </label>
+      <label>Indicador do Mapa
+        <select id="report-map-metric"><option value="total">Participações</option><option value="women">Mulheres</option><option value="men">Homens</option><option value="youth">Jovens</option></select>
+      </label>
+      <button id="report-reset" class="secondary">Limpar filtros</button>
+    </section>
+
     <section class="panel">
-      <h2>Relatórios e Exportações</h2>
-      <p>Geração de relatórios com dados consolidados e proveniência metodológica para o projeto <strong>${h(projectName)}</strong>.</p>
+      <h2>Emissão de Relatório Técnico Completo</h2>
+      <p>Relatório executivo e territorial com consolidação analítica, distribuição espacial no mapa e proveniência metodológica para o projeto <strong>${h(projectName)}</strong>.</p>
       <div class="actions" style="display:flex;gap:0.75rem;flex-wrap:wrap;margin:1.25rem 0;">
-        <button id="report-inline" class="button">Pré-visualizar nesta página</button>
-        <a class="button secondary" href="${reportUrl}" target="_blank" rel="noopener">Abrir em Nova Aba / Imprimir</a>
-        <a class="button secondary" href="/api/v1/exports/attendance.csv?project_id=${encodeURIComponent(project)}">Exportar CSV</a>
-        <a class="button secondary" href="/api/v1/exports/attendance.json?project_id=${encodeURIComponent(project)}">Exportar JSON</a>
+        <button id="report-update" class="button">🔄 Atualizar Pré-visualização</button>
+        <a id="report-btn-tab" class="button secondary" href="#" target="_blank" rel="noopener">Abrir em Nova Aba / Salvar PDF</a>
+        <a id="report-btn-csv" class="button secondary" href="#">Exportar CSV</a>
+        <a id="report-btn-json" class="button secondary" href="#">Exportar JSON</a>
       </div>
-      <div id="report-status" class="meta" style="margin-top:0.5rem;"></div>
-      <div id="report-frame-container" style="margin-top:1.5rem;display:none;">
+      <div id="report-status" class="meta" style="margin-top:0.5rem;font-weight:600;"></div>
+      <div id="report-frame-container" style="margin-top:1.5rem;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
-          <strong>Pré-visualização do Relatório</strong>
-          <button id="print-inline-btn" class="button secondary" style="padding:0.35rem 0.75rem;font-size:0.85rem;">🖨️ Imprimir</button>
+          <strong>Pré-visualização do Relatório Oficial</strong>
+          <button id="print-inline-btn" class="button secondary" style="padding:0.35rem 0.75rem;font-size:0.85rem;">🖨️ Imprimir / Salvar PDF</button>
         </div>
-        <iframe id="report-frame" style="width:100%;min-height:600px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;" title="Prévia do Relatório"></iframe>
+        <iframe id="report-frame" style="width:100%;min-height:750px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;" title="Prévia do Relatório"></iframe>
       </div>
     </section>
   `);
@@ -513,13 +564,42 @@ async function reports() {
   const frame = document.querySelector('#report-frame') as HTMLIFrameElement;
   const printBtn = document.querySelector('#print-inline-btn') as HTMLButtonElement;
 
-  const loadPreview = async () => {
+  const getParams = () => {
+    const g = (document.querySelector('#report-group') as HTMLSelectElement)?.value || '';
+    const u = (document.querySelector('#report-unit') as HTMLSelectElement)?.value || '';
+    const c = (document.querySelector('#report-corede') as HTMLSelectElement)?.value || '';
+    const rf = (document.querySelector('#report-rf') as HTMLSelectElement)?.value || '';
+    const b = (document.querySelector('#report-biome') as HTMLSelectElement)?.value || '';
+    const incMap = (document.querySelector('#report-inc-map') as HTMLSelectElement)?.value || '1';
+    const mapLayer = (document.querySelector('#report-map-layer') as HTMLSelectElement)?.value || 'municipios';
+    const mapMetric = (document.querySelector('#report-map-metric') as HTMLSelectElement)?.value || 'total';
+
+    const q = new URLSearchParams({ project_id: project });
+    if (g) q.set('group_id', g);
+    if (u) q.set('unit_id', u);
+    if (c) q.set('corede', c);
+    if (rf) q.set('functional_region', rf);
+    if (b) q.set('biome', b);
+    q.set('include_map', incMap);
+    q.set('map_layer', mapLayer);
+    q.set('map_metric', mapMetric);
+    return q;
+  };
+
+  const updateUrlsAndPreview = async () => {
+    const q = getParams();
+    const qs = q.toString();
+    const tabLink = document.querySelector('#report-btn-tab') as HTMLAnchorElement;
+    const csvLink = document.querySelector('#report-btn-csv') as HTMLAnchorElement;
+    const jsonLink = document.querySelector('#report-btn-json') as HTMLAnchorElement;
+
+    if (tabLink) tabLink.href = `/api/v1/reports/preview?${qs}`;
+    if (csvLink) csvLink.href = `/api/v1/exports/attendance.csv?${qs}`;
+    if (jsonLink) jsonLink.href = `/api/v1/exports/attendance.json?${qs}`;
+
     try {
       statusEl.textContent = 'Carregando dados do relatório...';
-      const html = await api('/api/v1/reports/preview', {
-        method: 'POST',
-        body: JSON.stringify({ project_id: project })
-      });
+      const html = await api(`/api/v1/reports/preview?${qs}`);
       frameContainer.style.display = 'block';
       frame.srcdoc = typeof html === 'string' ? html : JSON.stringify(html);
       statusEl.textContent = 'Relatório gerado com sucesso.';
@@ -528,13 +608,38 @@ async function reports() {
     }
   };
 
-  document.querySelector('#report-inline')!.addEventListener('click', loadPreview);
+  (document.querySelector('#report-project') as HTMLSelectElement).onchange = (e) => {
+    const x = projectsRes.data.find((v: J) => v.id === (e.target as HTMLSelectElement).value);
+    project = x.id;
+    projectName = x.name;
+    document.querySelector('#project-name')!.textContent = x.name;
+    reports();
+  };
+
+  ['#report-group', '#report-unit', '#report-corede', '#report-rf', '#report-biome', '#report-inc-map', '#report-map-layer', '#report-map-metric'].forEach(sel => {
+    document.querySelector(sel)?.addEventListener('change', updateUrlsAndPreview);
+  });
+
+  document.querySelector('#report-update')!.addEventListener('click', updateUrlsAndPreview);
+
+  document.querySelector('#report-reset')!.addEventListener('click', () => {
+    ['#report-group', '#report-unit', '#report-corede', '#report-rf', '#report-biome'].forEach(sel => {
+      const el = document.querySelector(sel) as HTMLSelectElement;
+      if (el) el.value = '';
+    });
+    const mapInc = document.querySelector('#report-inc-map') as HTMLSelectElement;
+    if (mapInc) mapInc.value = '1';
+    updateUrlsAndPreview();
+  });
+
   printBtn?.addEventListener('click', () => {
     if (frame.contentWindow) {
       frame.contentWindow.focus();
       frame.contentWindow.print();
     }
   });
+
+  await updateUrlsAndPreview();
 }
 
 async function sources() {
@@ -548,30 +653,6 @@ async function sources() {
           <span>Tipo: ${h(x.kind)} · Status: ${h(x.provenance_status)} · SHA256: ${h(x.sha256 || '—')}</span>
         </article>
       `).join('') || '<p>Nenhuma fonte vinculada.</p>'}
-    </section>
-  `);
-}
-
-async function admin() {
-  const j = await api('/api/v1/admin/integrations');
-  view('Administração', `
-    <section class="panel">
-      <h2>Serviço Territorial RS (Integração de Referência)</h2>
-      <article class="record">
-        <b>Serviço Territorial RS (C++26 Adaptador Local) <span class="badge verified">Ativo / Offline Ready</span></b>
-        <span><b>Catálogo Territorial:</b> fornecido pelo TRAMA-RS, com cobertura e estado de validação explícitos</span>
-        <span><b>Endpoint padrão:</b> http://10.163.80.176:8080</span>
-        <span><b>Status de Operação:</b> Sincronizado e validado localmente</span>
-      </article>
-    </section>
-    <section class="panel">
-      <h2>Outros Serviços do Ecossistema</h2>
-      ${j.data.map((x: J) => `
-        <article class="record">
-          <b>${h(x.name)}</b>
-          <span>Status: ${h(x.status)} · Conector: ${h(x.health)}</span>
-        </article>
-      `).join('')}
     </section>
   `);
 }
