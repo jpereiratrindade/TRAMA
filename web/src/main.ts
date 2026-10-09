@@ -481,20 +481,59 @@ async function records(kind: string) {
   document.querySelectorAll('[data-delete]').forEach(b => b.addEventListener('click', () => remove(`/api/v1/${path}/${(b as HTMLElement).dataset.delete}`, kind === 'action-items' ? 'actions' : kind)));
 }
 
-function reports() {
+async function reports() {
+  if (!project) {
+    view('Relatórios', `<div class="notice">Selecione ou crie um projeto para gerar relatórios.</div>`);
+    return;
+  }
+  const reportUrl = `/api/v1/reports/preview?project_id=${encodeURIComponent(project)}`;
   view('Relatórios', `
     <section class="panel">
       <h2>Relatórios e Exportações</h2>
-      <p>Geração de relatórios com dados consolidados e proveniência metodológica.</p>
-      <button id="report">Gerar relatório técnico</button>
-      <a class="button secondary" href="/api/v1/exports/attendance.csv?project_id=${project}">Exportar CSV</a>
-      <a class="button secondary" href="/api/v1/exports/attendance.json?project_id=${project}">Exportar JSON</a>
+      <p>Geração de relatórios com dados consolidados e proveniência metodológica para o projeto <strong>${h(projectName)}</strong>.</p>
+      <div class="actions" style="display:flex;gap:0.75rem;flex-wrap:wrap;margin:1.25rem 0;">
+        <button id="report-inline" class="button">Pré-visualizar nesta página</button>
+        <a class="button secondary" href="${reportUrl}" target="_blank" rel="noopener">Abrir em Nova Aba / Imprimir</a>
+        <a class="button secondary" href="/api/v1/exports/attendance.csv?project_id=${encodeURIComponent(project)}">Exportar CSV</a>
+        <a class="button secondary" href="/api/v1/exports/attendance.json?project_id=${encodeURIComponent(project)}">Exportar JSON</a>
+      </div>
+      <div id="report-status" class="meta" style="margin-top:0.5rem;"></div>
+      <div id="report-frame-container" style="margin-top:1.5rem;display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
+          <strong>Pré-visualização do Relatório</strong>
+          <button id="print-inline-btn" class="button secondary" style="padding:0.35rem 0.75rem;font-size:0.85rem;">🖨️ Imprimir</button>
+        </div>
+        <iframe id="report-frame" style="width:100%;min-height:600px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;" title="Prévia do Relatório"></iframe>
+      </div>
     </section>
   `);
-  document.querySelector('#report')!.addEventListener('click', async () => {
-    const html = await api('/api/v1/reports/preview', { method: 'POST', body: JSON.stringify({ project_id: project }) });
-    const w = open();
-    w?.document.write(html);
+
+  const statusEl = document.querySelector('#report-status')!;
+  const frameContainer = document.querySelector('#report-frame-container') as HTMLDivElement;
+  const frame = document.querySelector('#report-frame') as HTMLIFrameElement;
+  const printBtn = document.querySelector('#print-inline-btn') as HTMLButtonElement;
+
+  const loadPreview = async () => {
+    try {
+      statusEl.textContent = 'Carregando dados do relatório...';
+      const html = await api('/api/v1/reports/preview', {
+        method: 'POST',
+        body: JSON.stringify({ project_id: project })
+      });
+      frameContainer.style.display = 'block';
+      frame.srcdoc = typeof html === 'string' ? html : JSON.stringify(html);
+      statusEl.textContent = 'Relatório gerado com sucesso.';
+    } catch (err: any) {
+      statusEl.textContent = 'Erro ao gerar relatório: ' + (err.message || err);
+    }
+  };
+
+  document.querySelector('#report-inline')!.addEventListener('click', loadPreview);
+  printBtn?.addEventListener('click', () => {
+    if (frame.contentWindow) {
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+    }
   });
 }
 

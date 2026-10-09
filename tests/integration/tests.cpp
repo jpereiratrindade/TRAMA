@@ -61,6 +61,9 @@ int main(int argc, char** argv) {
     fs::copy_file(out, restored.db);
     ok(verify(restored)["ok"], "restore verified");
 
+    // 4. Report generation schema & contract
+    ok(empty["kpis"]["uacs_documented"] == 0, "empty report kpis documented uacs");
+
     rs.stop();rs_thread.join();
     std::cout << "PASS: 8 migrations, WAL, TRAMA-RS client, preliminary provenance, analytics, admin and backup/restore\n";
     fs::remove_all(tmp);
