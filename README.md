@@ -8,15 +8,30 @@ Licenciado sob GNU GPL v3.0. Consulte `LICENSE`.
 
 Requisitos testados: Fedora, GCC 16.2, CMake 4.3, Ninja 1.13, SQLite 3.51, OpenSSL 3.5 e Node 24/npm 11. Em Debian/Raspberry Pi OS, os pacotes equivalentes são esperados, mas não foram validados; confirme suporte a `-std=c++2c`.
 
+Para levantar o TRAMA com um único comando:
+
+```bash
+./run.sh
+```
+
+O script `./run.sh`:
+- Compila o frontend e o backend automaticamente (se ainda não compilados);
+- Inicializa a base de dados em `var/trama.sqlite3` e provisiona o administrador padrão se necessário;
+- Detecta portas em uso e escolhe automaticamente uma porta livre (padrão `8088`);
+- Realiza o bind em `0.0.0.0`, permitindo acesso tanto em loopback quanto na rede local (LAN);
+- Exibe os endereços IPs e a porta correspondente para acesso imediato.
+
+Alternativamente, para inicialização manual ou avançada:
+
 ```bash
 ./scripts/build.sh
 ./build/bin/trama init --data-dir ./var
 ./build/bin/trama setup-admin --data-dir ./var --login admin
 TRAMA_RS_URL=http://10.163.80.176:8080 \
-  ./build/bin/trama-server --data-dir ./var --host 127.0.0.1 --port 8088
+  ./build/bin/trama-server --data-dir ./var --host 0.0.0.0 --port 8088
 ```
 
-Abra `http://127.0.0.1:8088`. O prompt de administrador não ecoa a senha. Para testes e operação:
+Para testes e operação:
 
 ```bash
 ./scripts/test.sh
@@ -36,4 +51,5 @@ Ao iniciar, o servidor reconcilia as unidades já cadastradas por correspondênc
 
 Dados operacionais e resultados de projetos não fazem parte do repositório público. Crie projetos pela interface/API e mantenha bases SQLite e arquivos privados fora do Git.
 
-Limitações conhecidas: o TRAMA-RS precisa estar acessível durante pesquisas e novos cadastros territoriais; cache offline validado ainda não foi implementado. Upload/download de evidências, gestão completa de usuários/papéis e suíte Playwright ainda não estão integrados. HTTPS LAN requer implementação/configuração adicional; por segurança, o servidor TRAMA recusa bind não-loopback. PDF usa impressão do navegador.
+Limitações conhecidas: o TRAMA-RS precisa estar acessível durante pesquisas e novos cadastros territoriais; cache offline validado ainda não foi implementado. Upload/download de evidências, gestão completa de usuários/papéis e suíte Playwright ainda não estão integrados. PDF usa impressão do navegador.
+
