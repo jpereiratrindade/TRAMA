@@ -26,7 +26,7 @@ int main(int argc, char** argv) {
     auto status = verify(p);
     ok(status["ok"], "database integrity");
     ok(status["journal_mode"] == "wal", "journal mode WAL");
-    ok(status["migrations"] == 8, "applied 8 migrations");
+    ok(status["migrations"] == 9, "applied 9 migrations");
     
     // 1. Territorial Context & Catalog Tests
     auto caibate_ctx = territorial_context(p, "4303301");

@@ -92,6 +92,28 @@ function h(value: unknown) {
   return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 }
 
+function formatTopic(topic: string): string {
+  const map: Record<string, string> = {
+    'desafio:sucessao_rural': 'Sucessão rural e jovens',
+    'desafio:assistencia_tecnica': 'Assistência técnica continuada',
+    'desafio:controle_carrapato': 'Manejo do carrapato bovino',
+    'desafio:especies_invasoras': 'Espécies invasoras (capim-annoni)',
+    'desafio:custo_insumos': 'Alto custo dos insumos',
+    'desafio:estiagens_agua': 'Estiagens e reservação de água',
+    'desafio:comercializacao': 'Comercialização e escala',
+    'desafio:acesso_credito': 'Acesso ao crédito rural',
+    'potencialidade:campo_nativo': 'Campo nativo conservado',
+    'potencialidade:conhecimento_tradicional': 'Conhecimento tradicional',
+    'potencialidade:organizacao_comunitaria': 'Organização comunitária',
+    'potencialidade:diversificacao_produtiva': 'Diversificação produtiva',
+    'potencialidade:atuacao_sindical': 'Atuação sindical (STRs)',
+    'potencialidade:integracao_institucional': 'Integração institucional',
+    'potencialidade:protagonismo_feminino': 'Protagonismo feminino',
+    'potencialidade:abertura_inovacao': 'Interesse por inovação'
+  };
+  return map[topic] || topic.replace(/^(desafio|potencialidade|perfil):/, '').replace(/_/g, ' ');
+}
+
 async function remove(path: string, back: string) {
   if (!confirm('Excluir este registro? O histórico de auditoria será preservado.')) return;
   await api(path, { method: 'DELETE', body: '{}' });
@@ -267,6 +289,70 @@ async function dashboard() {
           </table>
         </div>
       </section>
+      ${(ov.timeline || []).length ? `
+      <section class="panel">
+        <h2>Série temporal e ciclos de atividades</h2>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Ciclo / Período</th>
+                <th>Atividade</th>
+                <th>UACs Atendidas</th>
+                <th>Total Presenças</th>
+                <th>Mulheres</th>
+                <th>% Mulheres</th>
+                <th>Homens</th>
+                <th>Jovens</th>
+                <th>% Jovens</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${ov.timeline.map((t: J) => `
+                <tr>
+                  <td><b>${h(t.period)}</b></td>
+                  <td><span class="badge tag">${h(t.activity_kind)}</span></td>
+                  <td>${t.units_count}</td>
+                  <td><b>${t.total}</b></td>
+                  <td>${t.women}</td>
+                  <td>${t.total > 0 ? (t.women * 100 / t.total).toFixed(1) + '%' : '—'}</td>
+                  <td>${t.men}</td>
+                  <td>${t.youth}</td>
+                  <td>${t.total > 0 ? (t.youth * 100 / t.total).toFixed(1) + '%' : '—'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </section>` : ''}
+      ${(ov.topics_frequency || []).length ? `
+      <section class="panel">
+        <h2>Diagnóstico temático: desafios e potencialidades</h2>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:1.5rem;margin-top:1rem;">
+          <div>
+            <h3 style="color:#b45309;font-size:1rem;margin-top:0;">⚠️ Desafios mais recorrentes</h3>
+            <div class="chart">
+              ${(ov.topics_frequency as J[])
+                .filter(x => x.topic.startsWith('desafio:'))
+                .map(x => {
+                  const lbl = formatTopic(x.topic);
+                  return `<div><span title="${h(x.topic)}">${h(lbl)}</span><i style="width:${x.count / 12 * 100}%;background:linear-gradient(90deg,#ea580c,#d97706);"></i><b>${x.count}</b></div>`;
+                }).join('')}
+            </div>
+          </div>
+          <div>
+            <h3 style="color:#15803d;font-size:1rem;margin-top:0;">🌱 Potencialidades mais recorrentes</h3>
+            <div class="chart">
+              ${(ov.topics_frequency as J[])
+                .filter(x => x.topic.startsWith('potencialidade:'))
+                .map(x => {
+                  const lbl = formatTopic(x.topic);
+                  return `<div><span title="${h(x.topic)}">${h(lbl)}</span><i style="width:${x.count / 12 * 100}%;background:linear-gradient(90deg,#0e503e,#16a34a);"></i><b>${x.count}</b></div>`;
+                }).join('')}
+            </div>
+          </div>
+        </div>
+      </section>` : ''}
       <section class="panel">
         <h2>Observações por validação</h2>
         ${(ov.observations_by_status ?? []).length ? (ov.observations_by_status ?? []).map((x: J) => `<span class="badge">${h(x.status)}: ${x.count}</span>`).join(' ') : '<p>Nenhuma observação no projeto.</p>'}

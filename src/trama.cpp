@@ -129,7 +129,7 @@ json overview(const Paths&p,std::optional<std::string>group,std::optional<std::s
   if(corede&&!corede->empty()){w+=" AND corede=?";params.push_back(*corede);}
   if(functional_region&&!functional_region->empty()){w+=" AND functional_region=?";params.push_back(*functional_region);}
   if(biome&&!biome->empty()){w+=" AND (biome_predominant=? OR biomes_occurring LIKE ?)";params.push_back(*biome);params.push_back("%"+*biome+"%");}
-  St s(d,"SELECT count(*),coalesce(sum(total),0),coalesce(sum(women),0),coalesce(sum(men),0),coalesce(sum(youth),0) FROM v_attendance"+w);
+  St s(d,"SELECT count(DISTINCT unit_id),coalesce(sum(total),0),coalesce(sum(women),0),coalesce(sum(men),0),coalesce(sum(youth),0),count(*) FROM v_attendance"+w);
   for(size_t i=0;i<params.size();++i)s.b(i+1,params[i]);
   s.row();
   auto total=s.num(1);
@@ -137,6 +137,8 @@ json overview(const Paths&p,std::optional<std::string>group,std::optional<std::s
   pending.b(1,q);
   pending.row();
   auto observation_status=rows(d,"SELECT validation_status status,count(*) count FROM observations o JOIN activities a ON a.id=o.activity_id WHERE a.project_id=? AND o.deleted_at IS NULL GROUP BY validation_status",[&](St&x){x.b(1,q);});
+  auto timeline=rows(d,"SELECT coalesce(substr(occurred_at,1,7),'2026-S1') period,coalesce(activity_kind,'first_round_workshop') activity_kind,count(DISTINCT unit_id) units_count,count(*) activities_count,coalesce(sum(total),0) total,coalesce(sum(women),0) women,coalesce(sum(men),0) men,coalesce(sum(youth),0) youth FROM v_attendance"+w+" GROUP BY period,activity_kind ORDER BY period",[&](St&x){for(size_t i=0;i<params.size();++i)x.b(i+1,params[i]);});
+  auto topic_freq=rows(d,"SELECT o.topic,count(*) count FROM observations o JOIN activities a ON a.id=o.activity_id WHERE a.project_id=? AND o.deleted_at IS NULL GROUP BY o.topic ORDER BY count DESC,o.topic",[&](St&x){x.b(1,q);});
   json out;
   out["project_id"]=q;
   out["filters"]={
@@ -157,6 +159,8 @@ json overview(const Paths&p,std::optional<std::string>group,std::optional<std::s
     {"pending_action_items",pending.num(0)}
   };
   out["observations_by_status"]=observation_status;
+  out["timeline"]=timeline;
+  out["topics_frequency"]=topic_freq;
   out["rule_version"]="attendance-v1";
   out["generated_at"]=now();
   return out;
@@ -397,6 +401,8 @@ int server_main(int argc,char**argv){std::string root=arg(argc,argv,"--data-dir"
 
       auto action_items=rows(d,"SELECT ai.id,ai.title,ai.details,ai.status,ai.priority,ai.due_at,u.name unit_name FROM action_items ai LEFT JOIN units u ON u.id=ai.unit_id WHERE ai.project_id=? AND ai.deleted_at IS NULL ORDER BY CASE ai.status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'blocked' THEN 3 ELSE 4 END, ai.created_at DESC LIMIT 30",[&](St&s){s.b(1,pid);});
       auto observations=rows(d,"SELECT o.topic,o.statement,o.observation_kind,o.epistemic_status,o.validation_status,u.name unit_name FROM observations o JOIN activities a ON a.id=o.activity_id LEFT JOIN units u ON u.id=o.unit_id WHERE a.project_id=? AND o.deleted_at IS NULL ORDER BY o.created_at DESC LIMIT 30",[&](St&s){s.b(1,pid);});
+      auto topic_summary=rows(d,"SELECT o.topic,count(*) count FROM observations o JOIN activities a ON a.id=o.activity_id WHERE a.project_id=? AND o.deleted_at IS NULL GROUP BY o.topic ORDER BY count DESC,o.topic",[&](St&s){s.b(1,pid);});
+      auto timeline_summary=rows(d,"SELECT coalesce(substr(occurred_at,1,7),'2026-S1') period,coalesce(activity_kind,'first_round_workshop') activity_kind,count(DISTINCT unit_id) units_count,count(*) activities_count,coalesce(sum(total),0) total,coalesce(sum(women),0) women,coalesce(sum(men),0) men,coalesce(sum(youth),0) youth FROM v_attendance WHERE project_id=? GROUP BY period,activity_kind ORDER BY period",[&](St&s){s.b(1,pid);});
 
       int total_attendances=ov["kpis"].value("reported_attendances",0);
       int total_women=ov["kpis"].value("reported_women",0);
@@ -441,13 +447,17 @@ int server_main(int argc,char**argv){std::string root=arg(argc,argv,"--data-dir"
       html+=".tag-green{background:#dcfce7;color:#166534}";
       html+=".tag-blue{background:#e0f2fe;color:#0369a1}";
       html+=".tag-amber{background:#fef3c7;color:#92400e}";
+      html+=".topic-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-top:1rem}";
+      html+=".topic-item{display:grid;grid-template-columns:170px 1fr 35px;align-items:center;gap:0.6rem;font-size:0.84rem;margin-bottom:0.5rem}";
+      html+=".topic-fill{height:12px;border-radius:3px;background:#0e503e}";
+      html+=".topic-fill.warn{background:#b45309}";
       html+=".map-box{background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:1rem;margin-top:1rem}";
       html+="#report-map{height:400px;width:100%;border-radius:6px;border:1px solid #cbd5e1;background-color:#eef4f1;background-image:linear-gradient(rgba(14,80,62,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(14,80,62,.05) 1px,transparent 1px);background-size:32px 32px}";
       html+=".provenance-box{background:#f8fafc;border-left:4px solid #0284c7;border-radius:0 8px 8px 0;padding:1rem 1.25rem;margin-top:2rem;font-size:0.85rem;color:#475569}";
       html+=".actions{display:flex;gap:0.75rem;margin-bottom:1.5rem}";
       html+="button.btn{background:#0e503e;color:#fff;border:none;padding:0.6rem 1.2rem;border-radius:6px;font-weight:600;cursor:pointer;font-size:0.9rem;display:inline-flex;align-items:center;gap:0.4rem}";
       html+="button.btn:hover{background:#173f35}";
-      html+="@media print{.actions,.no-print{display:none !important}body{background:#fff;margin:0;padding:0;max-width:100%}.report-container{border:none;box-shadow:none;padding:0}#report-map{height:300px;page-break-inside:avoid}table{page-break-inside:auto}tr{page-break-inside:avoid;page-break-after:auto}h2{page-break-after:avoid}}";
+      html+="@media print{.actions,.no-print{display:none !important}body{background:#fff;margin:0;padding:0;max-width:100%}.report-container{border:none;box-shadow:none;padding:0}#report-map{height:300px;page-break-inside:avoid}table{page-break-inside:auto}tr{page-break-inside:avoid;page-break-after:auto}h2{page-break-after:avoid}.topic-grid{grid-template-columns:1fr}}";
       html+="</style>";
       html+="<script src=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.js\"></script>";
       html+="</head><body>";
@@ -541,6 +551,60 @@ int server_main(int argc,char**argv){std::string root=arg(argc,argv,"--data-dir"
         }
       }
       html+="</tbody><tfoot><tr><td colspan=\"6\">Total do Recorte</td><td class=\"num\">"+std::to_string(total_attendances)+"</td><td class=\"num\">"+std::to_string(total_women)+"</td><td class=\"num\">"+std::to_string(total_men)+"</td><td class=\"num\">"+std::to_string(total_youth)+"</td><td>—</td></tr></tfoot></table>";
+
+      if(!timeline_summary.empty()){
+        html+="<h2>📅 Série Temporal e Ciclos de Monitoramento</h2>";
+        html+="<table><thead><tr><th>Ciclo / Período</th><th>Tipo de Atividade</th><th class=\"num\">UACs Atendidas</th><th class=\"num\">Atividades</th><th class=\"num\">Participações</th><th class=\"num\">Mulheres</th><th class=\"num\">% Fem.</th><th class=\"num\">Homens</th><th class=\"num\">Jovens</th><th class=\"num\">% Jovem</th></tr></thead><tbody>";
+        for(auto&tl:timeline_summary){
+          int t_tot=tl.value("total",0),t_w=tl.value("women",0),t_m=tl.value("men",0),t_y=tl.value("youth",0);
+          std::string p_w=t_tot>0?format_pct(t_w*100.0/t_tot):"—",p_y=t_tot>0?format_pct(t_y*100.0/t_tot):"—";
+          html+="<tr><td><strong>"+esc(tl.value("period",""))+"</strong></td><td>"+esc(tl.value("activity_kind",""))+"</td><td class=\"num\">"+std::to_string(tl.value("units_count",0))+"</td><td class=\"num\">"+std::to_string(tl.value("activities_count",0))+"</td><td class=\"num\"><strong>"+std::to_string(t_tot)+"</strong></td><td class=\"num\">"+std::to_string(t_w)+"</td><td class=\"num\">"+p_w+"</td><td class=\"num\">"+std::to_string(t_m)+"</td><td class=\"num\">"+std::to_string(t_y)+"</td><td class=\"num\">"+p_y+"</td></tr>";
+        }
+        html+="</tbody></table>";
+      }
+
+      if(!topic_summary.empty()){
+        html+="<h2>📈 Síntese dos Desafios e Potencialidades Territoriais</h2>";
+        html+="<div class=\"topic-grid\">";
+        html+="<div><h3 style=\"color:#b45309;font-size:0.95rem;margin:0 0 0.75rem 0;\">⚠️ Desafios Estruturais Mais Recorrentes</h3>";
+        for(auto&tp:topic_summary){
+          std::string raw=tp.value("topic","");
+          if(raw.rfind("desafio:",0)==0){
+            std::string label=raw.substr(8);
+            if(label=="sucessao_rural")label="Sucessão rural e jovens";
+            else if(label=="assistencia_tecnica")label="Assistência técnica";
+            else if(label=="controle_carrapato")label="Controle do carrapato";
+            else if(label=="especies_invasoras")label="Espécies invasoras (annoni)";
+            else if(label=="custo_insumos")label="Alto custo dos insumos";
+            else if(label=="estiagens_agua")label="Estiagens e reservação";
+            else if(label=="comercializacao")label="Comercialização e escala";
+            else if(label=="acesso_credito")label="Acesso ao crédito";
+            int c=tp.value("count",0);
+            int pct=std::min(100,c*100/12);
+            html+="<div class=\"topic-item\"><span title=\""+esc(raw)+"\">"+esc(label)+"</span><div style=\"background:#fed7aa;border-radius:3px;overflow:hidden;\"><div class=\"topic-fill warn\" style=\"width:"+std::to_string(pct)+"%\"></div></div><strong>"+std::to_string(c)+"</strong></div>";
+          }
+        }
+        html+="</div>";
+        html+="<div><h3 style=\"color:#0e503e;font-size:0.95rem;margin:0 0 0.75rem 0;\">🌱 Potencialidades Territoriais Mais Recorrentes</h3>";
+        for(auto&tp:topic_summary){
+          std::string raw=tp.value("topic","");
+          if(raw.rfind("potencialidade:",0)==0){
+            std::string label=raw.substr(14);
+            if(label=="campo_nativo")label="Campo nativo conservado";
+            else if(label=="conhecimento_tradicional")label="Conhecimento tradicional";
+            else if(label=="organizacao_comunitaria")label="Organização comunitária";
+            else if(label=="diversificacao_produtiva")label="Diversificação produtiva";
+            else if(label=="atuacao_sindical")label="Atuação sindical (STRs)";
+            else if(label=="integracao_institucional")label="Integração institucional";
+            else if(label=="protagonismo_feminino")label="Protagonismo feminino";
+            else if(label=="abertura_inovacao")label="Interesse por inovação";
+            int c=tp.value("count",0);
+            int pct=std::min(100,c*100/12);
+            html+="<div class=\"topic-item\"><span title=\""+esc(raw)+"\">"+esc(label)+"</span><div style=\"background:#bbf7d0;border-radius:3px;overflow:hidden;\"><div class=\"topic-fill\" style=\"width:"+std::to_string(pct)+"%\"></div></div><strong>"+std::to_string(c)+"</strong></div>";
+          }
+        }
+        html+="</div></div>";
+      }
 
       if(!action_items.empty()){
         html+="<h2>📋 Encaminhamentos e Ações Registradas</h2>";
